@@ -1,0 +1,32 @@
+{
+  "colorGroups": [
+    {
+      "query": "tag:#community/AI_Interview_&_Trip_State_Engine",
+      "color": {
+        "a": 1,
+        "rgb": 5142951
+      }
+    },
+    {
+      "query": "tag:#community/OpenSpec_Change_Management",
+      "color": {
+        "a": 1,
+        "rgb": 15896107
+      }
+    },
+    {
+      "query": "tag:#community/UI_Layout_&_Interactions",
+      "color": {
+        "a": 1,
+        "rgb": 14767961
+      }
+    },
+    {
+      "query": "tag:#community/Route-Aware_Lodging_&_Tech_Stack",
+      "color": {
+        "a": 1,
+        "rgb": 7780274
+      }
+    }
+  ]
+}

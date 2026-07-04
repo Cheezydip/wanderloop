@@ -1,0 +1,470 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "Three-Panel Coordinated Layout",
+      "file_type": "document",
+      "source_file": "ARCHITECTURE.md",
+      "source_location": "Lines 10-27",
+      "rationale": "Key UX layout anchoring the application with Chat, Map, and Itinerary panels in sync.",
+      "id": "architecture_three_panel_layout",
+      "community": 2,
+      "norm_label": "three-panel coordinated layout"
+    },
+    {
+      "label": "AI Chat Panel",
+      "file_type": "document",
+      "source_file": "UI_DESIGN.md",
+      "source_location": "Lines 52-57",
+      "rationale": "Leftmost panel (320px) for user interview, quick-reply chips, and typing indicators.",
+      "id": "architecture_chat_panel",
+      "community": 0,
+      "norm_label": "ai chat panel"
+    },
+    {
+      "label": "Map Panel (Hero)",
+      "file_type": "document",
+      "source_file": "UI_DESIGN.md",
+      "source_location": "Lines 58-63",
+      "rationale": "Center panel displaying routes, stop popovers, and homestay commute lines.",
+      "id": "architecture_map_panel",
+      "community": 2,
+      "norm_label": "map panel (hero)"
+    },
+    {
+      "label": "Itinerary Sidebar",
+      "file_type": "document",
+      "source_file": "UI_DESIGN.md",
+      "source_location": "Lines 64-69",
+      "rationale": "Rightmost panel (360px) showing collapsible day cards, stop details, and day totals.",
+      "id": "architecture_itinerary_sidebar",
+      "community": 2,
+      "norm_label": "itinerary sidebar"
+    },
+    {
+      "label": "Shared Trip State",
+      "file_type": "document",
+      "source_file": "ARCHITECTURE.md",
+      "source_location": "Lines 19-27",
+      "rationale": "Single source of truth (Trip, Day, Stop, Homestay, Message) driving all three panels.",
+      "id": "state_shared_trip_state",
+      "community": 0,
+      "norm_label": "shared trip state"
+    },
+    {
+      "label": "Core Domain Models",
+      "file_type": "document",
+      "source_file": "CLAUDE.md",
+      "source_location": "Lines 34-36",
+      "rationale": "Data definitions for Trip, Day, Stop, Homestay, and Message models.",
+      "id": "state_domain_model",
+      "community": 0,
+      "norm_label": "core domain models"
+    },
+    {
+      "label": "AI Interview Tool Loop",
+      "file_type": "document",
+      "source_file": "ARCHITECTURE.md",
+      "source_location": "Lines 31-33",
+      "rationale": "Backend Claude tool-calling loop that interviews the user and generates itinerary JSON.",
+      "id": "ai_tool_calling_loop",
+      "community": 0,
+      "norm_label": "ai interview tool loop"
+    },
+    {
+      "label": "Route-Aware Lodging Pipeline",
+      "file_type": "document",
+      "source_file": "ARCHITECTURE.md",
+      "source_location": "Lines 87-99",
+      "rationale": "Computes day's center of gravity, stay zones, queries lodging API, and assigns blended scores.",
+      "id": "lodging_pipeline",
+      "community": 3,
+      "norm_label": "route-aware lodging pipeline"
+    },
+    {
+      "label": "Stay Zones Clustering",
+      "file_type": "document",
+      "source_file": "TODO.md",
+      "source_location": "Lines 45-47",
+      "rationale": "Clusters consecutive days' stops to determine where users should spend the night.",
+      "id": "lodging_stay_zones",
+      "community": 3,
+      "norm_label": "stay zones clustering"
+    },
+    {
+      "label": "Lodging Blended Scoring",
+      "file_type": "document",
+      "source_file": "ARCHITECTURE.md",
+      "source_location": "Lines 94-95",
+      "rationale": "Evaluates lodging based on route fit, price, reviews, amenities, and host quality.",
+      "id": "lodging_blended_scoring",
+      "community": 3,
+      "norm_label": "lodging blended scoring"
+    },
+    {
+      "label": "Directions & Routing API",
+      "file_type": "document",
+      "source_file": "CLAUDE.md",
+      "source_location": "Lines 48-50",
+      "rationale": "Fetches routes/polylines and travel times, and recomputes dynamically when stop state changes.",
+      "id": "routing_directions_api",
+      "community": 0,
+      "norm_label": "directions & routing api"
+    },
+    {
+      "label": "Per-Day Color Identity",
+      "file_type": "document",
+      "source_file": "UI_DESIGN.md",
+      "source_location": "Lines 42-43",
+      "rationale": "Each day owns a unique color hue (teal, amber, violet, rose, lime) for routes and cards.",
+      "id": "ui_color_identity",
+      "community": 2,
+      "norm_label": "per-day color identity"
+    },
+    {
+      "label": "Budget Tracker",
+      "file_type": "document",
+      "source_file": "UI_DESIGN.md",
+      "source_location": "Lines 80-83",
+      "rationale": "Top-bar dropdown with stacked categories (Lodging, Activities, Food, Transit) vs. budget.",
+      "id": "ui_budget_tracker",
+      "community": 0,
+      "norm_label": "budget tracker"
+    },
+    {
+      "label": "Signature UX Interactions",
+      "file_type": "document",
+      "source_file": "UI_DESIGN.md",
+      "source_location": "Lines 86-91",
+      "rationale": "Interactions like drag-to-reoptimize, hover-to-draw commute lines, and scoped edits.",
+      "id": "signature_interactions",
+      "community": 2,
+      "norm_label": "signature ux interactions"
+    },
+    {
+      "label": "Open Architectural Decisions",
+      "file_type": "document",
+      "source_file": "TODO.md",
+      "source_location": "Lines 69-73",
+      "rationale": "Undecided elements: Map provider, lodging source, and backend language.",
+      "id": "open_architectural_decisions",
+      "community": 3,
+      "norm_label": "open architectural decisions"
+    },
+    {
+      "label": "Frontend Tech Stack",
+      "file_type": "document",
+      "source_file": "CLAUDE.md",
+      "source_location": "Lines 15-20",
+      "rationale": "Vite + React + TypeScript + Tailwind CSS with Mapbox GL JS.",
+      "id": "tech_stack_scaffolding",
+      "community": 3,
+      "norm_label": "frontend tech stack"
+    },
+    {
+      "label": "OpenSpec Specification-Driven Change Framework",
+      "file_type": "document",
+      "source_file": "openspec/config.yaml",
+      "source_location": "Lines 1-21",
+      "rationale": "Framework that governs how code changes are proposed, implemented, synced, and archived.",
+      "id": "openspec_change_framework",
+      "community": 1,
+      "norm_label": "openspec specification-driven change framework"
+    },
+    {
+      "label": "OpenSpec Apply Workflow",
+      "file_type": "document",
+      "source_file": ".agent/workflows/opsx-apply.md",
+      "source_location": "Lines 1-50",
+      "rationale": "Workflow for implementing tasks defined in an OpenSpec change.",
+      "id": "openspec_apply_workflow",
+      "community": 1,
+      "norm_label": "openspec apply workflow"
+    },
+    {
+      "label": "OpenSpec Propose Workflow",
+      "file_type": "document",
+      "source_file": ".agent/workflows/opsx-propose.md",
+      "source_location": "Lines 1-50",
+      "rationale": "Workflow to propose a new change, generating spec and task files.",
+      "id": "openspec_propose_workflow",
+      "community": 1,
+      "norm_label": "openspec propose workflow"
+    },
+    {
+      "label": "OpenSpec Sync Specs Workflow",
+      "file_type": "document",
+      "source_file": ".agent/workflows/opsx-sync.md",
+      "source_location": "Lines 1-50",
+      "rationale": "Workflow to sync delta specifications back to the main specifications.",
+      "id": "openspec_sync_workflow",
+      "community": 1,
+      "norm_label": "openspec sync specs workflow"
+    },
+    {
+      "label": "OpenSpec Archive Workflow",
+      "file_type": "document",
+      "source_file": ".agent/workflows/opsx-archive.md",
+      "source_location": "Lines 1-50",
+      "rationale": "Workflow to archive completed changes, clean up deltas, and log outcomes.",
+      "id": "openspec_archive_workflow",
+      "community": 1,
+      "norm_label": "openspec archive workflow"
+    },
+    {
+      "label": "OpenSpec Explore Workflow",
+      "file_type": "document",
+      "source_file": ".agent/workflows/opsx-explore.md",
+      "source_location": "Lines 1-50",
+      "rationale": "Workflow to enter explore mode for requirements gathering and design decisions.",
+      "id": "openspec_explore_workflow",
+      "community": 1,
+      "norm_label": "openspec explore workflow"
+    }
+  ],
+  "links": [
+    {
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "UI_DESIGN.md",
+      "source": "architecture_chat_panel",
+      "target": "architecture_three_panel_layout"
+    },
+    {
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "UI_DESIGN.md",
+      "source": "architecture_itinerary_sidebar",
+      "target": "architecture_three_panel_layout"
+    },
+    {
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "UI_DESIGN.md",
+      "source": "architecture_map_panel",
+      "target": "architecture_three_panel_layout"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "ARCHITECTURE.md",
+      "source": "architecture_three_panel_layout",
+      "target": "state_shared_trip_state"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "CLAUDE.md",
+      "source": "tech_stack_scaffolding",
+      "target": "architecture_three_panel_layout"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "ARCHITECTURE.md",
+      "source": "ai_tool_calling_loop",
+      "target": "architecture_chat_panel"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "ARCHITECTURE.md",
+      "source": "routing_directions_api",
+      "target": "architecture_map_panel"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "UI_DESIGN.md",
+      "source": "signature_interactions",
+      "target": "architecture_map_panel"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "UI_DESIGN.md",
+      "source": "ui_color_identity",
+      "target": "architecture_map_panel"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "UI_DESIGN.md",
+      "source": "signature_interactions",
+      "target": "architecture_itinerary_sidebar"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "UI_DESIGN.md",
+      "source": "ui_color_identity",
+      "target": "architecture_itinerary_sidebar"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "ARCHITECTURE.md",
+      "source": "ai_tool_calling_loop",
+      "target": "state_shared_trip_state"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "ARCHITECTURE.md",
+      "source": "lodging_pipeline",
+      "target": "state_shared_trip_state"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "CLAUDE.md",
+      "source": "routing_directions_api",
+      "target": "state_shared_trip_state"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "UI_DESIGN.md",
+      "source": "signature_interactions",
+      "target": "state_shared_trip_state"
+    },
+    {
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "CLAUDE.md",
+      "source": "state_shared_trip_state",
+      "target": "state_domain_model"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "UI_DESIGN.md",
+      "source": "ui_budget_tracker",
+      "target": "state_shared_trip_state"
+    },
+    {
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "ARCHITECTURE.md",
+      "source": "lodging_pipeline",
+      "target": "lodging_blended_scoring"
+    },
+    {
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "TODO.md",
+      "source": "lodging_pipeline",
+      "target": "lodging_stay_zones"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "TODO.md",
+      "source": "open_architectural_decisions",
+      "target": "lodging_pipeline"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "CLAUDE.md",
+      "source": "open_architectural_decisions",
+      "target": "tech_stack_scaffolding"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "openspec/config.yaml",
+      "source": "openspec_apply_workflow",
+      "target": "openspec_change_framework"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "openspec/config.yaml",
+      "source": "openspec_archive_workflow",
+      "target": "openspec_change_framework"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "openspec/config.yaml",
+      "source": "openspec_explore_workflow",
+      "target": "openspec_change_framework"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "openspec/config.yaml",
+      "source": "openspec_propose_workflow",
+      "target": "openspec_change_framework"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "openspec/config.yaml",
+      "source": "openspec_sync_workflow",
+      "target": "openspec_change_framework"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": ".agent/workflows/opsx-apply.md",
+      "source": "openspec_apply_workflow",
+      "target": "openspec_sync_workflow"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": ".agent/workflows/opsx-propose.md",
+      "source": "openspec_propose_workflow",
+      "target": "openspec_apply_workflow"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": ".agent/workflows/opsx-explore.md",
+      "source": "openspec_explore_workflow",
+      "target": "openspec_propose_workflow"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": ".agent/workflows/opsx-sync.md",
+      "source": "openspec_sync_workflow",
+      "target": "openspec_archive_workflow"
+    }
+  ],
+  "hyperedges": []
+}

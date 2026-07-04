@@ -1,0 +1,142 @@
+{
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.graphify_detect.json": {
+    "mtime": 1783177852.8879392,
+    "ast_hash": "167af6949f895b1f52a22356b3acd20f",
+    "semantic_hash": "167af6949f895b1f52a22356b3acd20f"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\skills\\openspec-apply-change\\SKILL.md": {
+    "mtime": 1783177497.207616,
+    "ast_hash": "9ceecda02c4d18dcdfdc4a7163d54f93",
+    "semantic_hash": "9ceecda02c4d18dcdfdc4a7163d54f93"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\skills\\openspec-archive-change\\SKILL.md": {
+    "mtime": 1783177497.2209003,
+    "ast_hash": "2a1969d2325505cc4e2b4949e788f530",
+    "semantic_hash": "2a1969d2325505cc4e2b4949e788f530"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\skills\\openspec-explore\\SKILL.md": {
+    "mtime": 1783177497.2049825,
+    "ast_hash": "67744ad8afb861f59b7ad1e91f5d4c14",
+    "semantic_hash": "67744ad8afb861f59b7ad1e91f5d4c14"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\skills\\openspec-propose\\SKILL.md": {
+    "mtime": 1783177497.224901,
+    "ast_hash": "a6be597aea95407dacaed8456e9cf072",
+    "semantic_hash": "a6be597aea95407dacaed8456e9cf072"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\skills\\openspec-sync-specs\\SKILL.md": {
+    "mtime": 1783177497.2139003,
+    "ast_hash": "ca0a72a09ab4270d6868acc01dc9e6c9",
+    "semantic_hash": "ca0a72a09ab4270d6868acc01dc9e6c9"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\workflows\\opsx-apply.md": {
+    "mtime": 1783177497.2429101,
+    "ast_hash": "37477a6b881ff2f51326c95c559c32dd",
+    "semantic_hash": "37477a6b881ff2f51326c95c559c32dd"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\workflows\\opsx-archive.md": {
+    "mtime": 1783177497.2689352,
+    "ast_hash": "fb11cb4f32d37d1287121c0e8675ab1b",
+    "semantic_hash": "fb11cb4f32d37d1287121c0e8675ab1b"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\workflows\\opsx-explore.md": {
+    "mtime": 1783177497.2349012,
+    "ast_hash": "3b4fefe235c32a2daa05c6dbc405f599",
+    "semantic_hash": "3b4fefe235c32a2daa05c6dbc405f599"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\workflows\\opsx-propose.md": {
+    "mtime": 1783177497.2751746,
+    "ast_hash": "aced2115213bf217e5c46e4c0a37947d",
+    "semantic_hash": "aced2115213bf217e5c46e4c0a37947d"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agent\\workflows\\opsx-sync.md": {
+    "mtime": 1783177497.2649002,
+    "ast_hash": "5e74fe01eb12006d9e882105615e2435",
+    "semantic_hash": "5e74fe01eb12006d9e882105615e2435"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.agents\\skills\\graphify\\SKILL.md": {
+    "mtime": 1782577780.367998,
+    "ast_hash": "d76dd09bd530318e737a742a0bcf0b33",
+    "semantic_hash": "d76dd09bd530318e737a742a0bcf0b33"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\commands\\opsx\\apply.md": {
+    "mtime": 1783177497.3050566,
+    "ast_hash": "0db6d3f271815c08cfee68553f687bb8",
+    "semantic_hash": "0db6d3f271815c08cfee68553f687bb8"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\commands\\opsx\\archive.md": {
+    "mtime": 1783177497.31043,
+    "ast_hash": "ae42a14739376c7a12fefa49fa5b83de",
+    "semantic_hash": "ae42a14739376c7a12fefa49fa5b83de"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\commands\\opsx\\explore.md": {
+    "mtime": 1783177497.3021863,
+    "ast_hash": "cee4bfba615d8b8b562c7655f2ecb172",
+    "semantic_hash": "cee4bfba615d8b8b562c7655f2ecb172"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\commands\\opsx\\propose.md": {
+    "mtime": 1783177497.3134296,
+    "ast_hash": "c43a074155382075bcb13e46f0191d36",
+    "semantic_hash": "c43a074155382075bcb13e46f0191d36"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\commands\\opsx\\sync.md": {
+    "mtime": 1783177497.3072453,
+    "ast_hash": "2d532a088d7a227bfd274a1682ffdb72",
+    "semantic_hash": "2d532a088d7a227bfd274a1682ffdb72"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\skills\\openspec-apply-change\\SKILL.md": {
+    "mtime": 1783177497.286399,
+    "ast_hash": "9ceecda02c4d18dcdfdc4a7163d54f93",
+    "semantic_hash": "9ceecda02c4d18dcdfdc4a7163d54f93"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\skills\\openspec-archive-change\\SKILL.md": {
+    "mtime": 1783177497.29481,
+    "ast_hash": "2a1969d2325505cc4e2b4949e788f530",
+    "semantic_hash": "2a1969d2325505cc4e2b4949e788f530"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\skills\\openspec-explore\\SKILL.md": {
+    "mtime": 1783177497.2833986,
+    "ast_hash": "67744ad8afb861f59b7ad1e91f5d4c14",
+    "semantic_hash": "67744ad8afb861f59b7ad1e91f5d4c14"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\skills\\openspec-propose\\SKILL.md": {
+    "mtime": 1783177497.297087,
+    "ast_hash": "a6be597aea95407dacaed8456e9cf072",
+    "semantic_hash": "a6be597aea95407dacaed8456e9cf072"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\.claude\\skills\\openspec-sync-specs\\SKILL.md": {
+    "mtime": 1783177497.2918093,
+    "ast_hash": "ca0a72a09ab4270d6868acc01dc9e6c9",
+    "semantic_hash": "ca0a72a09ab4270d6868acc01dc9e6c9"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\ARCHITECTURE.md": {
+    "mtime": 1782577649.0743537,
+    "ast_hash": "e5920345c025e8938d8448432adcc130",
+    "semantic_hash": "e5920345c025e8938d8448432adcc130"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\CLAUDE.md": {
+    "mtime": 1782576194.2105398,
+    "ast_hash": "ff3bf69f6a7e5176e5772d2224222679",
+    "semantic_hash": "ff3bf69f6a7e5176e5772d2224222679"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\SKILL.md": {
+    "mtime": 1782576019.6058679,
+    "ast_hash": "4d245e7359542717835c7ae32d5430a4",
+    "semantic_hash": "4d245e7359542717835c7ae32d5430a4"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\TODO.md": {
+    "mtime": 1782575896.9369087,
+    "ast_hash": "a8ad48b88cae815314e5b9d9d83dba15",
+    "semantic_hash": "a8ad48b88cae815314e5b9d9d83dba15"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\UI_DESIGN.md": {
+    "mtime": 1782575927.7524278,
+    "ast_hash": "5bd7fff4b4dfc6a78520d4288a1e16ef",
+    "semantic_hash": "5bd7fff4b4dfc6a78520d4288a1e16ef"
+  },
+  "C:\\Users\\Rupayan Saha\\Desktop\\Web Dev\\wanderloop\\openspec\\config.yaml": {
+    "mtime": 1783177497.321448,
+    "ast_hash": "9e3e7672b387a282583011181ab35f9a",
+    "semantic_hash": "9e3e7672b387a282583011181ab35f9a"
+  }
+}

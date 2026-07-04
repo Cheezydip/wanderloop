@@ -1,0 +1,424 @@
+{
+  "nodes": [
+    {
+      "id": "g0",
+      "type": "group",
+      "label": "AI Interview & Trip State Engine",
+      "x": 0,
+      "y": 0,
+      "width": 660,
+      "height": 400,
+      "color": "1"
+    },
+    {
+      "id": "n_architecture_chat_panel",
+      "type": "file",
+      "file": "AI Chat Panel.md",
+      "x": 20,
+      "y": 80,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_ai_tool_calling_loop",
+      "type": "file",
+      "file": "AI Interview Tool Loop.md",
+      "x": 220,
+      "y": 80,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_ui_budget_tracker",
+      "type": "file",
+      "file": "Budget Tracker.md",
+      "x": 420,
+      "y": 80,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_state_domain_model",
+      "type": "file",
+      "file": "Core Domain Models.md",
+      "x": 20,
+      "y": 160,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_routing_directions_api",
+      "type": "file",
+      "file": "Directions & Routing API.md",
+      "x": 220,
+      "y": 160,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_state_shared_trip_state",
+      "type": "file",
+      "file": "Shared Trip State.md",
+      "x": 420,
+      "y": 160,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "g1",
+      "type": "group",
+      "label": "OpenSpec Change Management",
+      "x": 740,
+      "y": 0,
+      "width": 660,
+      "height": 400,
+      "color": "2"
+    },
+    {
+      "id": "n_openspec_apply_workflow",
+      "type": "file",
+      "file": "OpenSpec Apply Workflow.md",
+      "x": 760,
+      "y": 80,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_openspec_archive_workflow",
+      "type": "file",
+      "file": "OpenSpec Archive Workflow.md",
+      "x": 960,
+      "y": 80,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_openspec_explore_workflow",
+      "type": "file",
+      "file": "OpenSpec Explore Workflow.md",
+      "x": 1160,
+      "y": 80,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_openspec_propose_workflow",
+      "type": "file",
+      "file": "OpenSpec Propose Workflow.md",
+      "x": 760,
+      "y": 160,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_openspec_change_framework",
+      "type": "file",
+      "file": "OpenSpec Specification-Driven Change Framework.md",
+      "x": 960,
+      "y": 160,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_openspec_sync_workflow",
+      "type": "file",
+      "file": "OpenSpec Sync Specs Workflow.md",
+      "x": 1160,
+      "y": 160,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "g2",
+      "type": "group",
+      "label": "UI Layout & Interactions",
+      "x": 0,
+      "y": 480,
+      "width": 660,
+      "height": 400,
+      "color": "3"
+    },
+    {
+      "id": "n_architecture_itinerary_sidebar",
+      "type": "file",
+      "file": "Itinerary Sidebar.md",
+      "x": 20,
+      "y": 560,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_architecture_map_panel",
+      "type": "file",
+      "file": "Map Panel (Hero).md",
+      "x": 220,
+      "y": 560,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_ui_color_identity",
+      "type": "file",
+      "file": "Per-Day Color Identity.md",
+      "x": 420,
+      "y": 560,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_signature_interactions",
+      "type": "file",
+      "file": "Signature UX Interactions.md",
+      "x": 20,
+      "y": 640,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_architecture_three_panel_layout",
+      "type": "file",
+      "file": "Three-Panel Coordinated Layout.md",
+      "x": 220,
+      "y": 640,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "g3",
+      "type": "group",
+      "label": "Route-Aware Lodging & Tech Stack",
+      "x": 740,
+      "y": 480,
+      "width": 660,
+      "height": 400,
+      "color": "4"
+    },
+    {
+      "id": "n_tech_stack_scaffolding",
+      "type": "file",
+      "file": "Frontend Tech Stack.md",
+      "x": 760,
+      "y": 560,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_lodging_blended_scoring",
+      "type": "file",
+      "file": "Lodging Blended Scoring.md",
+      "x": 960,
+      "y": 560,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_open_architectural_decisions",
+      "type": "file",
+      "file": "Open Architectural Decisions.md",
+      "x": 1160,
+      "y": 560,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_lodging_pipeline",
+      "type": "file",
+      "file": "Route-Aware Lodging Pipeline.md",
+      "x": 760,
+      "y": 640,
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "n_lodging_stay_zones",
+      "type": "file",
+      "file": "Stay Zones Clustering.md",
+      "x": 960,
+      "y": 640,
+      "width": 180,
+      "height": 60
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_architecture_three_panel_layout_architecture_chat_panel",
+      "fromNode": "n_architecture_three_panel_layout",
+      "toNode": "n_architecture_chat_panel",
+      "label": "implements [EXTRACTED]"
+    },
+    {
+      "id": "e_architecture_three_panel_layout_architecture_itinerary_sidebar",
+      "fromNode": "n_architecture_three_panel_layout",
+      "toNode": "n_architecture_itinerary_sidebar",
+      "label": "implements [EXTRACTED]"
+    },
+    {
+      "id": "e_architecture_three_panel_layout_architecture_map_panel",
+      "fromNode": "n_architecture_three_panel_layout",
+      "toNode": "n_architecture_map_panel",
+      "label": "implements [EXTRACTED]"
+    },
+    {
+      "id": "e_architecture_three_panel_layout_state_shared_trip_state",
+      "fromNode": "n_architecture_three_panel_layout",
+      "toNode": "n_state_shared_trip_state",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_architecture_three_panel_layout_tech_stack_scaffolding",
+      "fromNode": "n_architecture_three_panel_layout",
+      "toNode": "n_tech_stack_scaffolding",
+      "label": "references [INFERRED]"
+    },
+    {
+      "id": "e_architecture_chat_panel_ai_tool_calling_loop",
+      "fromNode": "n_architecture_chat_panel",
+      "toNode": "n_ai_tool_calling_loop",
+      "label": "conceptually_related_to [INFERRED]"
+    },
+    {
+      "id": "e_architecture_map_panel_routing_directions_api",
+      "fromNode": "n_architecture_map_panel",
+      "toNode": "n_routing_directions_api",
+      "label": "conceptually_related_to [INFERRED]"
+    },
+    {
+      "id": "e_architecture_map_panel_signature_interactions",
+      "fromNode": "n_architecture_map_panel",
+      "toNode": "n_signature_interactions",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_architecture_map_panel_ui_color_identity",
+      "fromNode": "n_architecture_map_panel",
+      "toNode": "n_ui_color_identity",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_architecture_itinerary_sidebar_signature_interactions",
+      "fromNode": "n_architecture_itinerary_sidebar",
+      "toNode": "n_signature_interactions",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_architecture_itinerary_sidebar_ui_color_identity",
+      "fromNode": "n_architecture_itinerary_sidebar",
+      "toNode": "n_ui_color_identity",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_state_shared_trip_state_ai_tool_calling_loop",
+      "fromNode": "n_state_shared_trip_state",
+      "toNode": "n_ai_tool_calling_loop",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_state_shared_trip_state_lodging_pipeline",
+      "fromNode": "n_state_shared_trip_state",
+      "toNode": "n_lodging_pipeline",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_state_shared_trip_state_routing_directions_api",
+      "fromNode": "n_state_shared_trip_state",
+      "toNode": "n_routing_directions_api",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_state_shared_trip_state_signature_interactions",
+      "fromNode": "n_state_shared_trip_state",
+      "toNode": "n_signature_interactions",
+      "label": "references [INFERRED]"
+    },
+    {
+      "id": "e_state_shared_trip_state_state_domain_model",
+      "fromNode": "n_state_shared_trip_state",
+      "toNode": "n_state_domain_model",
+      "label": "implements [EXTRACTED]"
+    },
+    {
+      "id": "e_state_shared_trip_state_ui_budget_tracker",
+      "fromNode": "n_state_shared_trip_state",
+      "toNode": "n_ui_budget_tracker",
+      "label": "references [INFERRED]"
+    },
+    {
+      "id": "e_lodging_pipeline_lodging_blended_scoring",
+      "fromNode": "n_lodging_pipeline",
+      "toNode": "n_lodging_blended_scoring",
+      "label": "implements [EXTRACTED]"
+    },
+    {
+      "id": "e_lodging_pipeline_lodging_stay_zones",
+      "fromNode": "n_lodging_pipeline",
+      "toNode": "n_lodging_stay_zones",
+      "label": "implements [EXTRACTED]"
+    },
+    {
+      "id": "e_lodging_pipeline_open_architectural_decisions",
+      "fromNode": "n_lodging_pipeline",
+      "toNode": "n_open_architectural_decisions",
+      "label": "conceptually_related_to [INFERRED]"
+    },
+    {
+      "id": "e_open_architectural_decisions_tech_stack_scaffolding",
+      "fromNode": "n_open_architectural_decisions",
+      "toNode": "n_tech_stack_scaffolding",
+      "label": "conceptually_related_to [INFERRED]"
+    },
+    {
+      "id": "e_openspec_change_framework_openspec_apply_workflow",
+      "fromNode": "n_openspec_change_framework",
+      "toNode": "n_openspec_apply_workflow",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_openspec_change_framework_openspec_archive_workflow",
+      "fromNode": "n_openspec_change_framework",
+      "toNode": "n_openspec_archive_workflow",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_openspec_change_framework_openspec_explore_workflow",
+      "fromNode": "n_openspec_change_framework",
+      "toNode": "n_openspec_explore_workflow",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_openspec_change_framework_openspec_propose_workflow",
+      "fromNode": "n_openspec_change_framework",
+      "toNode": "n_openspec_propose_workflow",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_openspec_change_framework_openspec_sync_workflow",
+      "fromNode": "n_openspec_change_framework",
+      "toNode": "n_openspec_sync_workflow",
+      "label": "references [EXTRACTED]"
+    },
+    {
+      "id": "e_openspec_apply_workflow_openspec_sync_workflow",
+      "fromNode": "n_openspec_apply_workflow",
+      "toNode": "n_openspec_sync_workflow",
+      "label": "conceptually_related_to [INFERRED]"
+    },
+    {
+      "id": "e_openspec_apply_workflow_openspec_propose_workflow",
+      "fromNode": "n_openspec_apply_workflow",
+      "toNode": "n_openspec_propose_workflow",
+      "label": "conceptually_related_to [INFERRED]"
+    },
+    {
+      "id": "e_openspec_propose_workflow_openspec_explore_workflow",
+      "fromNode": "n_openspec_propose_workflow",
+      "toNode": "n_openspec_explore_workflow",
+      "label": "conceptually_related_to [INFERRED]"
+    },
+    {
+      "id": "e_openspec_sync_workflow_openspec_archive_workflow",
+      "fromNode": "n_openspec_sync_workflow",
+      "toNode": "n_openspec_archive_workflow",
+      "label": "conceptually_related_to [INFERRED]"
+    }
+  ]
+}

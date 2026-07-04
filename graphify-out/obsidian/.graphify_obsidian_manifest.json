@@ -1,0 +1,31 @@
+{
+  "files": [
+    ".obsidian/graph.json",
+    "AI Chat Panel.md",
+    "AI Interview Tool Loop.md",
+    "Budget Tracker.md",
+    "Core Domain Models.md",
+    "Directions & Routing API.md",
+    "Frontend Tech Stack.md",
+    "Itinerary Sidebar.md",
+    "Lodging Blended Scoring.md",
+    "Map Panel (Hero).md",
+    "Open Architectural Decisions.md",
+    "OpenSpec Apply Workflow.md",
+    "OpenSpec Archive Workflow.md",
+    "OpenSpec Explore Workflow.md",
+    "OpenSpec Propose Workflow.md",
+    "OpenSpec Specification-Driven Change Framework.md",
+    "OpenSpec Sync Specs Workflow.md",
+    "Per-Day Color Identity.md",
+    "Route-Aware Lodging Pipeline.md",
+    "Shared Trip State.md",
+    "Signature UX Interactions.md",
+    "Stay Zones Clustering.md",
+    "Three-Panel Coordinated Layout.md",
+    "_COMMUNITY_AI Interview & Trip State Engine.md",
+    "_COMMUNITY_OpenSpec Change Management.md",
+    "_COMMUNITY_Route-Aware Lodging & Tech Stack.md",
+    "_COMMUNITY_UI Layout & Interactions.md"
+  ]
+}
