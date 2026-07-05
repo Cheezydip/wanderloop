@@ -1,0 +1,285 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel-solid);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  
+  --color-day-1: var(--day-1);
+  --color-day-2: var(--day-2);
+  --color-day-3: var(--day-3);
+  --color-day-4: var(--day-4);
+  --color-day-5: var(--day-5);
+  
+  --font-sans: "Sora", "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Sora", system-ui, sans-serif;
+}
+
+:root {
+  /* ─── Modern Obsidian Core Tokens ─── */
+  --bg: #0e1513;
+  --panel-solid: #161d1b;
+  --panel: rgba(22, 29, 27, 0.7);
+  --panel-hover: rgba(22, 29, 27, 0.85);
+  --text: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #2dd4bf;
+  --accent-dim: rgba(45, 212, 191, 0.15);
+
+  /* ─── Per-Day Hues ─── */
+  --day-1: #2dd4bf; /* Teal */
+  --day-2: #fbbf24; /* Amber */
+  --day-3: #c084fc; /* Violet */
+  --day-4: #f43f5e; /* Rose */
+  --day-5: #a3e635; /* Lime */
+}
+
+/* ─── Base Reset ─── */
+html, body, #root {
+  background-color: var(--bg);
+  color: var(--text);
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: "Sora", "Inter", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ─── Custom Scrollbars ─── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(45, 212, 191, 0.12);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(45, 212, 191, 0.25);
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ─── Glassmorphism Primitives ─── */
+.glass-panel {
+  background: var(--panel);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-panel-solid {
+  background: var(--panel-solid);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-input {
+  background: rgba(14, 21, 19, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.1), 0 0 20px rgba(45, 212, 191, 0.05);
+}
+
+/* ─── Glow Effects ─── */
+.glow-accent {
+  box-shadow: 0 0 15px rgba(45, 212, 191, 0.15), 0 0 30px rgba(45, 212, 191, 0.05);
+}
+
+.glow-accent-strong {
+  box-shadow: 0 0 20px rgba(45, 212, 191, 0.25), 0 0 40px rgba(45, 212, 191, 0.1);
+}
+
+/* ─── Transitions ─── */
+.transition-all-300 {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.transition-all-500 {
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Animations ─── */
+
+/* Fade In */
+.fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Slide Up (Scroll Reveal) */
+.slide-up {
+  animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Slide In from Right (Panel Glide) */
+.slide-in-right {
+  animation: slideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Slide In from Left (Panel Glide) */
+.slide-in-left {
+  animation: slideInLeft 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Scale In */
+.scale-in {
+  animation: scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Pulse Glow (for active map markers) */
+.pulse-glow {
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(45, 212, 191, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(45, 212, 191, 0.6));
+  }
+}
+
+/* Ring Pulse (for empty state input) */
+.ring-pulse {
+  animation: ringPulse 3s ease-in-out infinite;
+}
+
+@keyframes ringPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.3), 0 0 30px rgba(45, 212, 191, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(45, 212, 191, 0), 0 0 40px rgba(45, 212, 191, 0.1);
+  }
+}
+
+/* Shimmer Loading Skeleton */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(45, 212, 191, 0.03) 25%,
+    rgba(45, 212, 191, 0.08) 50%,
+    rgba(45, 212, 191, 0.03) 75%
+  );
+  background-size: 200% 100%;
+  animation: loadingShimmer 1.8s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+@keyframes loadingShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Typing shimmer bar */
+.shimmer-bar {
+  background: linear-gradient(
+    90deg,
+    rgba(45, 212, 191, 0.05) 0%,
+    rgba(45, 212, 191, 0.15) 50%,
+    rgba(45, 212, 191, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: loadingShimmer 2s ease-in-out infinite;
+}
+
+/* Dash animation for route lines */
+@keyframes dash {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+/* Staggered scroll-reveal for child cards */
+.stagger-children > * {
+  opacity: 0;
+  transform: translateY(20px);
+  animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.3s; }
+.stagger-children > *:nth-child(7) { animation-delay: 0.35s; }
+.stagger-children > *:nth-child(8) { animation-delay: 0.4s; }
+.stagger-children > *:nth-child(9) { animation-delay: 0.45s; }
+.stagger-children > *:nth-child(10) { animation-delay: 0.5s; }
+
+/* Smooth SVG viewBox transitions */
+.map-svg {
+  transition: viewBox 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
