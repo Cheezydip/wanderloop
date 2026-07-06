@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer } from 'react';
-import { mockTrip, mockHomestays } from '../data/mockTrip';
+import { mockTrip, mockHomestays, mockKyotoTrip, mockOsakaTrip, mockHakoneTrip } from '../data/mockTrip';
 
 const initialState = {
   trip: mockTrip,
@@ -14,6 +14,8 @@ const initialState = {
   isGenerating: false,
   isInterviewMode: false,
   hasTrip: true, // false = show Empty State
+  mapLayer: 'stops', // 'stops' | 'homestays'
+  activeHomestayOnMapId: null, // for homestay popover on map
 };
 
 function tripReducer(state, action) {
@@ -89,6 +91,9 @@ function tripReducer(state, action) {
     case 'HOVER_HOMESTAY':
       return { ...state, hoveredHomestayId: action.payload };
       
+    case 'SET_HOMESTAYS':
+      return { ...state, homestays: action.payload };
+      
     case 'SET_ACTIVE_TAB':
       return { ...state, activeTab: action.payload };
       
@@ -108,6 +113,18 @@ function tripReducer(state, action) {
     case 'SELECT_STOP':
       return { ...state, activeStopId: action.payload };
 
+    case 'SET_MAP_LAYER':
+      return {
+        ...state,
+        mapLayer: action.payload,
+        // Clear cross-layer selections when switching
+        activeStopId: action.payload === 'homestays' ? null : state.activeStopId,
+        activeHomestayOnMapId: action.payload === 'stops' ? null : state.activeHomestayOnMapId,
+      };
+
+    case 'SELECT_HOMESTAY_ON_MAP':
+      return { ...state, activeHomestayOnMapId: action.payload };
+
     case 'SET_GENERATING':
       return { ...state, isGenerating: action.payload };
 
@@ -123,18 +140,32 @@ function tripReducer(state, action) {
         hoveredStopId: null,
         selectedHomestayId: null,
         hoveredHomestayId: null,
+        activeHomestayOnMapId: null,
         isGenerating: false,
         isInterviewMode: false,
+        mapLayer: 'stops',
       };
 
-    case 'LOAD_TRIP':
+    case 'LOAD_TRIP': {
+      const prompt = (action.payload || '').toLowerCase();
+      let selectedTrip = mockTrip;
+
+      if (prompt.includes('kyoto')) {
+        selectedTrip = mockKyotoTrip;
+      } else if (prompt.includes('osaka')) {
+        selectedTrip = mockOsakaTrip;
+      } else if (prompt.includes('hakone')) {
+        selectedTrip = mockHakoneTrip;
+      }
+
       return {
         ...state,
-        trip: mockTrip,
+        trip: selectedTrip,
         hasTrip: true,
         isGenerating: false,
         isInterviewMode: false,
       };
+    }
       
     default:
       return state;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTrip } from '../../context/TripContext';
-import { getDayColorBorderClass, getDayColorBgClass, getDayColorHex } from '../../utils/colors';
+import { getDayColorHex } from '../../utils/colors';
 
 /* ─── Skeleton Shimmer for Generating State ─── */
 function SkeletonDay({ idx }) {
@@ -102,8 +102,6 @@ export default function ItineraryPanel() {
             <div className="space-y-2.5 stagger-children">
               {state.trip.days.map((day) => {
                 const isExpanded = expandedDayId === day.id;
-                const borderCol = getDayColorBorderClass(day.colorHue);
-                const bgCol = getDayColorBgClass(day.colorHue);
                 const colorHex = getDayColorHex(day.colorHue);
 
                 const dayCost = day.stops.reduce((sum, s) => sum + s.costEstimate, 0);
@@ -227,11 +225,22 @@ export default function ItineraryPanel() {
 
                                 {/* Rationale Popover */}
                                 {isActive && (
-                                  <div className="mx-1 p-2.5 rounded-lg bg-accent/5 border border-accent/10 text-[10px] text-accent/80 leading-relaxed scale-in">
-                                    <span className="font-bold uppercase tracking-wider text-[7px] text-accent block mb-1">
-                                      AI Rationale · Why this?
-                                    </span>
-                                    {stop.rationale}
+                                  <div className="mx-1 p-2.5 rounded-lg bg-accent/5 border border-accent/10 text-[10px] text-accent/80 leading-relaxed scale-in space-y-2 text-left">
+                                    <div>
+                                      <span className="font-bold uppercase tracking-wider text-[7px] text-accent block mb-1">
+                                        AI Rationale · Why this?
+                                      </span>
+                                      {stop.rationale}
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.dispatchEvent(new CustomEvent('show-nearby-places', { detail: stop }));
+                                      }}
+                                      className="w-full py-1 rounded bg-accent/10 hover:bg-accent/20 border border-accent/20 text-accent font-bold text-[9px] cursor-pointer transition-colors"
+                                    >
+                                      🔍 Show Nearby Places on Map
+                                    </button>
                                   </div>
                                 )}
                               </div>

@@ -39,14 +39,76 @@ export default function ChatPanel() {
     dispatch({ type: 'ADD_MESSAGE', payload: userMessage });
     setInputValue('');
 
-    // Trigger Mock AI response
+    const lowerText = text.toLowerCase();
+    const isSearch = lowerText.startsWith('/search') || lowerText.startsWith('search ') || lowerText.startsWith('/find') || lowerText.startsWith('find ');
+
+    // Trigger AI response
     setIsTyping(true);
+
+    if (isSearch) {
+      const searchQuery = text
+        .replace(/^\/(search|find)\s+/i, '')
+        .replace(/^(search|find)\s+/i, '')
+        .trim();
+
+      fetch(`/api/geocode?text=${encodeURIComponent(searchQuery)}`)
+        .then(res => {
+          if (!res.ok) throw new Error('Geocoding service unavailable');
+          return res.json();
+        })
+        .then(data => {
+          setIsTyping(false);
+          if (data.features && data.features.length > 0) {
+            const feature = data.features[0];
+            const [lng, lat] = feature.geometry.coordinates;
+            const label = feature.properties.label;
+
+            // Dispatch map pan event to center the map live
+            window.dispatchEvent(new CustomEvent('map-pan-to', { detail: { lat, lng } }));
+
+            dispatch({
+              type: 'ADD_MESSAGE',
+              payload: {
+                id: `ai-${Date.now()}`,
+                role: 'assistant',
+                content: `I found **${label}** at coordinates \`[${lat.toFixed(4)}, ${lng.toFixed(4)}]\` and centered the map on it!`,
+                timestamp: new Date().toISOString()
+              }
+            });
+          } else {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              payload: {
+                id: `ai-${Date.now()}`,
+                role: 'assistant',
+                content: `Sorry, I couldn't find any location matches for "${searchQuery}". Could you try being more specific?`,
+                timestamp: new Date().toISOString()
+              }
+            });
+          }
+        })
+        .catch(err => {
+          console.error('Geocoding chat error:', err);
+          setIsTyping(false);
+          dispatch({
+            type: 'ADD_MESSAGE',
+            payload: {
+              id: `ai-${Date.now()}`,
+              role: 'assistant',
+              content: `Sorry, I ran into an error searching for "${searchQuery}". Please check your connection or try again.`,
+              timestamp: new Date().toISOString()
+            }
+          });
+        });
+      return;
+    }
+
     setTimeout(() => {
       let aiText = "I've processed your edit request. The itinerary has been updated — check the map for the optimized route. How else can I refine your trip?";
       
-      const lowerText = text.toLowerCase();
-      if (lowerText.includes('cheaper') || lowerText.includes('lodging') || lowerText.includes('budget')) {
-        aiText = "Based on your request for budget options, I recommend selecting 'Asakusa Zen Ryokan' — it's the most affordable at ¥6,200/night and closest to your Day 1 stops. You can choose a homestay in the itinerary panel on the right.";
+      if (lowerText.includes('cheaper') || lowerText.includes('lodging') || lowerText.includes('budget') || lowerText.includes('homestay') || lowerText.includes('hotel') || lowerText.includes('hostel')) {
+        dispatch({ type: 'SET_MAP_LAYER', payload: 'homestays' });
+        aiText = "I've switched the map to the **Homestays** layer so you can view all lodging options in the area! You will see house markers plotted on the map. I recommend 'Asakusa Zen Ryokan' (¥6,200/night) as it is the most budget-friendly option and has the lowest average travel time to your itinerary stops.";
       } else if (lowerText.includes('museum') || lowerText.includes('day 3')) {
         aiText = "Day 3 already features teamLab Planets TOKYO, a world-class digital art museum! If you'd like to swap Odaiba Seaside Park for another museum, like the Mori Art Museum in Roppongi, just let me know and I'll re-optimize the route.";
       } else if (lowerText.includes('relaxed') || lowerText.includes('pace')) {

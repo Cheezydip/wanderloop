@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTrip } from './context/TripContext';
 import TopBar from './components/TopBar';
 import ChatPanel from './features/chat/ChatPanel';
@@ -25,7 +25,7 @@ function EmptyState() {
 
     // Simulate AI planning delay, then load mock trip
     setTimeout(() => {
-      dispatch({ type: 'LOAD_TRIP' });
+      dispatch({ type: 'LOAD_TRIP', payload: text });
       dispatch({
         type: 'ADD_MESSAGE',
         payload: {
@@ -120,6 +120,43 @@ function EmptyState() {
 export default function App() {
   const { state, dispatch } = useTrip();
   const { activeTab, hasTrip, isInterviewMode } = state;
+
+  // Fetch real/dynamic lodgings from the backend when stops change
+  useEffect(() => {
+    if (!hasTrip || !state.trip?.days) return;
+
+    // Calculate the average coordinates of all stops to serve as search center
+    let totalLat = 0;
+    let totalLng = 0;
+    let count = 0;
+
+    state.trip.days.forEach(day => {
+      day.stops.forEach(stop => {
+        totalLat += stop.lat;
+        totalLng += stop.lng;
+        count++;
+      });
+    });
+
+    if (count === 0) return;
+
+    const avgLat = totalLat / count;
+    const avgLng = totalLng / count;
+
+    const fetchLodgings = async () => {
+      try {
+        const response = await fetch(`/api/lodgings?lat=${avgLat}&lng=${avgLng}&radius=2000`);
+        if (response.ok) {
+          const lodgings = await response.json();
+          dispatch({ type: 'SET_HOMESTAYS', payload: lodgings });
+        }
+      } catch (err) {
+        console.error('Failed to fetch lodgings:', err);
+      }
+    };
+
+    fetchLodgings();
+  }, [state.trip, hasTrip, dispatch]);
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg text-text">

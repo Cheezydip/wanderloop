@@ -175,3 +175,90 @@ export const mockHomestays = [
     rationale: 'A few minutes walk from teamLab Planets (Day 3). Modern, spacious layout with floor-to-ceiling windows overlooking Tokyo Bay.'
   }
 ];
+
+export const mockKyotoTrip = {
+  id: 'kyoto-3d',
+  title: 'Kyoto Sightseeing Tour',
+  budget: 30000,
+  messages: [
+    {
+      id: 'm1',
+      role: 'assistant',
+      content: 'Welcome to Kyoto! Here is a curated itinerary balancing historic temples, serene bamboo groves, traditional markets, and scenic districts.',
+      timestamp: new Date().toISOString()
+    }
+  ],
+  days: [
+    {
+      id: 'day-1',
+      dayNumber: 1,
+      colorHue: 'teal',
+      stops: [
+        { id: 'kyoto-s1', name: 'Kinkaku-ji (Golden Pavilion)', lat: 35.0394, lng: 135.7292, timeEstimate: '09:00 AM - 10:30 AM', costEstimate: 500, rationale: 'Zen Buddhist temple covered in brilliant gold leaf overlooking a mirror pond.', order: 1 },
+        { id: 'kyoto-s2', name: 'Ryoan-ji Zen Rock Garden', lat: 35.0344, lng: 135.7182, timeEstimate: '11:00 AM - 12:30 PM', costEstimate: 600, rationale: 'Kyoto\'s most famous Zen dry landscape rock garden, perfect for contemplation.', order: 2 },
+        { id: 'kyoto-s3', name: 'Arashiyama Bamboo Grove', lat: 35.0156, lng: 135.6715, timeEstimate: '02:00 PM - 04:30 PM', costEstimate: 0, rationale: 'Stroll through towering green stalks of bamboo swaying in the wind.', order: 3 }
+      ]
+    },
+    {
+      id: 'day-2',
+      dayNumber: 2,
+      colorHue: 'amber',
+      stops: [
+        { id: 'kyoto-s4', name: 'Fushimi Inari-taisha Shrine', lat: 34.9671, lng: 135.7727, timeEstimate: '08:30 AM - 11:30 AM', costEstimate: 0, rationale: 'Hike through paths lined with thousands of vibrant red torii gates.', order: 1 },
+        { id: 'kyoto-s5', name: 'Kiyomizu-dera Temple', lat: 34.9949, lng: 135.7850, timeEstimate: '01:00 PM - 03:00 PM', costEstimate: 400, rationale: 'Iconic wooden temple offering sweeping views of Kyoto from its high stage.', order: 2 },
+        { id: 'kyoto-s6', name: 'Yasaka Shrine & Gion', lat: 35.0037, lng: 135.7785, timeEstimate: '04:00 PM - 07:00 PM', costEstimate: 0, rationale: 'Explore Gion, Kyoto\'s famous geisha district, active in the early evening.', order: 3 }
+      ]
+    }
+  ]
+};
+
+export const mockOsakaTrip = {
+  id: 'osaka-3d',
+  title: 'Osaka Food & Castle Tour',
+  budget: 20000,
+  messages: [
+    {
+      id: 'm1',
+      role: 'assistant',
+      content: 'Welcome to Osaka, Japan\'s kitchen! This plan highlights historic castles, street food, and vibrant nightlife.',
+      timestamp: new Date().toISOString()
+    }
+  ],
+  days: [
+    {
+      id: 'day-1',
+      dayNumber: 1,
+      colorHue: 'teal',
+      stops: [
+        { id: 'osaka-s1', name: 'Osaka Castle', lat: 34.6873, lng: 135.5262, timeEstimate: '10:00 AM - 12:30 PM', costEstimate: 600, rationale: 'Explore the grand landmark castle and its surrounding park.', order: 1 },
+        { id: 'osaka-s2', name: 'Dotonbori Neon Street', lat: 34.6687, lng: 135.5013, timeEstimate: '05:30 PM - 08:30 PM', costEstimate: 2000, rationale: 'Taste famous Osaka street foods like Takoyaki and Okonomiyaki under the Glico sign.', order: 2 }
+      ]
+    }
+  ]
+};
+
+export const mockHakoneTrip = {
+  id: 'hakone-2d',
+  title: 'Hakone Hot Springs Weekend',
+  budget: 35000,
+  messages: [
+    {
+      id: 'm1',
+      role: 'assistant',
+      content: 'Welcome to Hakone! A mountain resort town famous for onsens, Lake Ashi, and beautiful views of Mt. Fuji.',
+      timestamp: new Date().toISOString()
+    }
+  ],
+  days: [
+    {
+      id: 'day-1',
+      dayNumber: 1,
+      colorHue: 'teal',
+      stops: [
+        { id: 'hakone-s1', name: 'Hakone Jinja Shrine', lat: 35.2045, lng: 139.0264, timeEstimate: '10:00 AM - 11:30 AM', costEstimate: 0, rationale: 'See the iconic peace torii gate standing submerged in the waters of Lake Ashi.', order: 1 },
+        { id: 'hakone-s2', name: 'Lake Ashi Sightseeing Cruise', lat: 35.2012, lng: 139.0015, timeEstimate: '12:00 PM - 01:30 PM', costEstimate: 1200, rationale: 'Ride a replica pirate ship across the crater lake with views of Mt. Fuji.', order: 2 }
+      ]
+    }
+  ]
+};
+
