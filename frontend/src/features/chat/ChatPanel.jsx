@@ -107,8 +107,11 @@ export default function ChatPanel() {
       let aiText = "I've processed your edit request. The itinerary has been updated — check the map for the optimized route. How else can I refine your trip?";
       
       if (lowerText.includes('cheaper') || lowerText.includes('lodging') || lowerText.includes('budget') || lowerText.includes('homestay') || lowerText.includes('hotel') || lowerText.includes('hostel')) {
-        dispatch({ type: 'SET_MAP_LAYER', payload: 'homestays' });
-        aiText = "I've switched the map to the **Homestays** layer so you can view all lodging options in the area! You will see house markers plotted on the map. I recommend 'Asakusa Zen Ryokan' (¥6,200/night) as it is the most budget-friendly option and has the lowest average travel time to your itinerary stops.";
+        // Toggle homestays overlay visible
+        if (!state.showHomestays) {
+          dispatch({ type: 'TOGGLE_HOMESTAYS' });
+        }
+        aiText = "I've toggled the **Homestays** overlay on the map so you can view all lodging options in the area! You will see house markers plotted on the map. I recommend 'Asakusa Zen Ryokan' (¥6,200/night) as it is the most budget-friendly option and has the lowest average travel time to your itinerary stops.";
       } else if (lowerText.includes('museum') || lowerText.includes('day 3')) {
         aiText = "Day 3 already features teamLab Planets TOKYO, a world-class digital art museum! If you'd like to swap Odaiba Seaside Park for another museum, like the Mori Art Museum in Roppongi, just let me know and I'll re-optimize the route.";
       } else if (lowerText.includes('relaxed') || lowerText.includes('pace')) {
@@ -132,12 +135,33 @@ export default function ChatPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[rgba(22,29,27,0.4)] border-r border-white/[0.06] w-full md:w-[320px] shrink-0 overflow-hidden">
+    <div
+      className="flex flex-col h-full w-full md:w-[320px] shrink-0 overflow-hidden"
+      style={{
+        background: 'var(--surface)',
+        borderRight: '1px solid var(--border)',
+        color: 'var(--text)',
+        transition: 'background 0.6s cubic-bezier(0.16, 1, 0.3, 1), border 0.6s cubic-bezier(0.16, 1, 0.3, 1), color 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
+      }}
+    >
       {/* Panel Header */}
-      <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between bg-[rgba(22,29,27,0.3)]">
-        <h2 className="font-bold text-xs flex items-center gap-2 text-white tracking-wide">
-          <div className="w-6 h-6 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center">
-            <svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <div
+        className="px-4 py-3 flex items-center justify-between"
+        style={{
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--surface-2)',
+          transition: 'background 0.6s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
+        }}
+      >
+        <h2 className="font-bold text-xs flex items-center gap-2 tracking-wide" style={{ color: 'var(--text)' }}>
+          <div
+            className="w-6 h-6 rounded-lg flex items-center justify-center"
+            style={{
+              background: 'var(--accent-dim)',
+              border: '1px solid var(--accent-border)'
+            }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: 'var(--accent)' }}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
           </div>
@@ -145,20 +169,26 @@ export default function ChatPanel() {
         </h2>
         <div className="flex items-center gap-1.5">
           <span className="relative flex h-1.5 w-1.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent"></span>
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: 'var(--accent)' }}></span>
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ background: 'var(--accent)' }}></span>
           </span>
-          <span className="text-[9px] text-accent font-mono font-medium">Live</span>
+          <span className="text-[9px] font-mono font-medium" style={{ color: 'var(--accent)' }}>Live</span>
         </div>
       </div>
 
       {/* Interview Mode Banner */}
       {state.isInterviewMode && (
-        <div className="px-4 py-2.5 bg-accent/5 border-b border-accent/10 flex items-center gap-2 fade-in">
-          <svg className="w-3.5 h-3.5 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div
+          className="px-4 py-2.5 flex items-center gap-2 fade-in"
+          style={{
+            background: 'var(--accent-dim)',
+            borderBottom: '1px solid var(--accent-border)'
+          }}
+        >
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: 'var(--accent)' }}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <span className="text-[10px] text-accent font-medium">Answer questions below to refine your trip</span>
+          <span className="text-[10px] font-medium" style={{ color: 'var(--accent)' }}>Answer questions below to refine your trip</span>
         </div>
       )}
 
@@ -174,20 +204,31 @@ export default function ChatPanel() {
             >
               {/* Role label */}
               {!isUser && (
-                <span className="text-[8px] text-accent font-mono uppercase tracking-widest mb-1 ml-1">
+                <span className="text-[8px] font-mono uppercase tracking-widest mb-1 ml-1" style={{ color: 'var(--accent)' }}>
                   Wanderloop AI
                 </span>
               )}
               <div
-                className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-relaxed ${
+                className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-relaxed`}
+                style={
                   isUser
-                    ? 'bg-accent/15 text-accent border border-accent/20 rounded-tr-sm'
-                    : 'bg-[rgba(22,29,27,0.8)] border border-white/[0.06] text-text rounded-tl-sm'
-                }`}
+                    ? {
+                        background: 'var(--accent-dim)',
+                        border: '1px solid var(--accent-border)',
+                        color: 'var(--accent)',
+                        borderRadius: '12px 12px 2px 12px'
+                      }
+                    : {
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        color: 'var(--text)',
+                        borderRadius: '12px 12px 12px 2px'
+                      }
+                }
               >
                 {msg.content}
               </div>
-              <span className="text-[8px] text-muted/60 mt-1 px-1 font-mono">
+              <span className="text-[8px] mt-1 px-1 font-mono" style={{ color: 'var(--muted)' }}>
                 {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
             </div>
@@ -197,22 +238,29 @@ export default function ChatPanel() {
         {/* Typing Indicator — Shimmer Card */}
         {isTyping && (
           <div className="flex flex-col items-start fade-in">
-            <span className="text-[8px] text-accent font-mono uppercase tracking-widest mb-1 ml-1">
+            <span className="text-[8px] font-mono uppercase tracking-widest mb-1 ml-1" style={{ color: 'var(--accent)' }}>
               Wanderloop AI
             </span>
-            <div className="max-w-[88%] bg-[rgba(22,29,27,0.8)] border border-white/[0.06] rounded-2xl rounded-tl-sm px-4 py-3.5 space-y-2">
+            <div
+              className="max-w-[88%] rounded-2xl px-4 py-3.5 space-y-2"
+              style={{
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                borderRadius: '12px 12px 12px 2px'
+              }}
+            >
               <div className="flex items-center gap-2 mb-1.5">
                 <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                  <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--accent)', animationDelay: '0ms' }}></span>
+                  <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--accent)', animationDelay: '150ms' }}></span>
+                  <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--accent)', animationDelay: '300ms' }}></span>
                 </div>
-                <span className="text-[9px] text-accent/60 font-mono">Planning route...</span>
+                <span className="text-[9px] font-mono" style={{ color: 'var(--muted)' }}>Planning route...</span>
               </div>
               <div className="space-y-1.5">
-                <div className="h-2 w-full shimmer-bar rounded"></div>
-                <div className="h-2 w-3/4 shimmer-bar rounded"></div>
-                <div className="h-2 w-1/2 shimmer-bar rounded"></div>
+                <div className="h-2 w-full shimmer rounded"></div>
+                <div className="h-2 w-3/4 shimmer rounded"></div>
+                <div className="h-2 w-1/2 shimmer rounded"></div>
               </div>
             </div>
           </div>
@@ -221,12 +269,31 @@ export default function ChatPanel() {
       </div>
 
       {/* Quick Reply Chips */}
-      <div className="px-3 py-2.5 border-t border-white/[0.04] bg-[rgba(22,29,27,0.2)] overflow-x-auto whitespace-nowrap flex items-center gap-1.5 no-scrollbar">
+      <div
+        className="px-3 py-2.5 border-t overflow-x-auto whitespace-nowrap flex items-center gap-1.5 no-scrollbar"
+        style={{
+          background: 'var(--surface-2)',
+          borderTop: '1px solid var(--border)'
+        }}
+      >
         {PRESET_QUICK_REPLIES.map((reply, idx) => (
           <button
             key={idx}
             onClick={() => handleSendMessage(reply.text)}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-white/[0.02] hover:bg-white/[0.06] hover:border-accent/20 border border-white/[0.05] rounded-full text-[9px] text-muted hover:text-white transition-all-300 font-medium cursor-pointer shrink-0"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[9px] font-medium cursor-pointer shrink-0 transition-all"
+            style={{
+              background: 'var(--surface-3)',
+              border: '1px solid var(--border)',
+              color: 'var(--muted)'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = 'var(--accent-border)';
+              e.currentTarget.style.color = 'var(--text)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+              e.currentTarget.style.color = 'var(--muted)';
+            }}
           >
             <span>{reply.icon}</span>
             <span>{reply.text}</span>
@@ -240,7 +307,11 @@ export default function ChatPanel() {
           e.preventDefault();
           handleSendMessage(inputValue);
         }}
-        className="p-3 border-t border-white/[0.06] bg-[rgba(22,29,27,0.4)] flex gap-2 items-center"
+        className="p-3 border-t flex gap-2 items-center"
+        style={{
+          background: 'var(--surface)',
+          borderTop: '1px solid var(--border)'
+        }}
       >
         <div className="flex-1 relative">
           <input
@@ -248,11 +319,17 @@ export default function ChatPanel() {
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             placeholder="Ask AI to edit or optimize..."
-            className="w-full pl-3.5 pr-9 py-2.5 rounded-xl text-xs text-white glass-input focus:outline-none placeholder-muted/50 font-sans"
+            className="w-full pl-3.5 pr-9 py-2.5 rounded-xl text-xs focus:outline-none placeholder-muted/50 font-sans"
+            style={{
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              color: 'var(--text)'
+            }}
           />
           <button
             type="button"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted/50 hover:text-accent transition-colors cursor-pointer"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors cursor-pointer"
+            style={{ color: 'var(--muted)' }}
             title="Voice input"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -263,7 +340,11 @@ export default function ChatPanel() {
         <button
           type="submit"
           disabled={!inputValue.trim()}
-          className="p-2.5 rounded-xl bg-accent text-bg shadow-md disabled:opacity-30 disabled:shadow-none hover:bg-accent/85 transition-all-300 transform active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
+          className="p-2.5 rounded-xl shadow-md disabled:opacity-30 disabled:shadow-none hover:bg-accent/85 transition-all transform active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
+          style={{
+            background: 'var(--accent)',
+            color: 'var(--bg)'
+          }}
         >
           <svg className="w-4 h-4 transform rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />

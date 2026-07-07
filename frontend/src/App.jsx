@@ -121,42 +121,54 @@ export default function App() {
   const { state, dispatch } = useTrip();
   const { activeTab, hasTrip, isInterviewMode } = state;
 
-  // Fetch real/dynamic lodgings from the backend when stops change
+  // Fetch real/dynamic lodgings from the backend when stops change (distributed for each day)
   useEffect(() => {
-    if (!hasTrip || !state.trip?.days) return;
+    if (!hasTrip || !state.trip?.days || state.trip.days.length === 0) return;
 
-    // Calculate the average coordinates of all stops to serve as search center
-    let totalLat = 0;
-    let totalLng = 0;
-    let count = 0;
-
-    state.trip.days.forEach(day => {
-      day.stops.forEach(stop => {
-        totalLat += stop.lat;
-        totalLng += stop.lng;
-        count++;
-      });
-    });
-
-    if (count === 0) return;
-
-    const avgLat = totalLat / count;
-    const avgLng = totalLng / count;
-
-    const fetchLodgings = async () => {
+    const fetchAllLodgings = async () => {
       try {
-        const response = await fetch(`/api/lodgings?lat=${avgLat}&lng=${avgLng}&radius=2000`);
-        if (response.ok) {
-          const lodgings = await response.json();
-          dispatch({ type: 'SET_HOMESTAYS', payload: lodgings });
-        }
+        const promises = state.trip.days.map(async (day) => {
+          if (!day.stops || day.stops.length === 0) return [];
+          
+          // Calculate center coordinate for this day
+          let dayLat = 0;
+          let dayLng = 0;
+          day.stops.forEach(s => {
+            dayLat += s.lat;
+            dayLng += s.lng;
+          });
+          const avgLat = dayLat / day.stops.length;
+          const avgLng = dayLng / day.stops.length;
+
+          // Fetch lodgings in a tighter 1500m radius for this day
+          const response = await fetch(`/api/lodgings?lat=${avgLat}&lng=${avgLng}&radius=1500`);
+          if (response.ok) {
+            const data = await response.json();
+            return data.map(item => ({ ...item, dayId: day.id }));
+          }
+          return [];
+        });
+
+        const results = await Promise.all(promises);
+        const combined = results.flat();
+
+        // De-duplicate same lodging name matches
+        const seen = new Set();
+        const unique = combined.filter(h => {
+          const key = `${h.name.toLowerCase()}-${h.lat.toFixed(4)}`;
+          const duplicate = seen.has(key);
+          seen.add(key);
+          return !duplicate;
+        });
+
+        dispatch({ type: 'SET_HOMESTAYS', payload: unique });
       } catch (err) {
-        console.error('Failed to fetch lodgings:', err);
+        console.error('Failed to fetch distributed lodgings:', err);
       }
     };
 
-    fetchLodgings();
-  }, [state.trip, hasTrip, dispatch]);
+    fetchAllLodgings();
+  }, [state.trip?.id, hasTrip, dispatch]);
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg text-text">
@@ -172,7 +184,16 @@ export default function App() {
           <>
             {/* Desktop View (Three Columns) */}
             <div className="hidden md:flex flex-1 overflow-hidden h-full">
-              <div className="slide-in-left">
+              <div
+                className="overflow-hidden flex-shrink-0"
+                style={{
+                  width: state.showChat ? '320px' : '0px',
+                  opacity: state.showChat ? 1 : 0,
+                  pointerEvents: state.showChat ? 'auto' : 'none',
+                  transition: 'width 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease',
+                  borderRight: state.showChat ? '1px solid var(--border)' : 'none',
+                }}
+              >
                 <ChatPanel />
               </div>
 
@@ -223,9 +244,8 @@ export default function App() {
                   <button
                     key={key}
                     onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', payload: key })}
-                    className={`flex flex-col items-center justify-center gap-0.5 py-1 px-3 text-[10px] font-bold transition-all-300 ${
-                      activeTab === key ? 'text-accent' : 'text-muted'
-                    }`}
+                    className={`flex flex-col items-center justify-center gap-0.5 py-1 px-3 text-[10px] font-bold transition-all-300 ${activeTab === key ? 'text-accent' : 'text-muted'
+                      }`}
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={icon} />

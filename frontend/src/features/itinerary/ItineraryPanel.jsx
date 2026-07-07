@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTrip } from '../../context/TripContext';
 import { getDayColorHex } from '../../utils/colors';
 
@@ -6,8 +6,12 @@ import { getDayColorHex } from '../../utils/colors';
 function SkeletonDay({ idx }) {
   return (
     <div
-      className="border border-white/[0.04] rounded-2xl bg-[rgba(22,29,27,0.4)] overflow-hidden"
-      style={{ animationDelay: `${idx * 120}ms` }}
+      className="border rounded-2xl overflow-hidden"
+      style={{
+        animationDelay: `${idx * 120}ms`,
+        background: 'var(--surface-2)',
+        borderColor: 'var(--border)'
+      }}
     >
       <div className="p-4 flex items-center gap-3">
         <div className="w-1.5 h-6 rounded-full shimmer"></div>
@@ -17,7 +21,7 @@ function SkeletonDay({ idx }) {
         </div>
         <div className="h-3 w-12 shimmer rounded"></div>
       </div>
-      <div className="px-4 pb-4 border-t border-white/[0.04] pt-3 space-y-2.5">
+      <div className="px-4 pb-4 border-t pt-3 space-y-2.5" style={{ borderColor: 'var(--border)' }}>
         {[1, 2, 3].map((i) => (
           <div key={i} className="flex items-center gap-2.5 p-2">
             <div className="w-5 h-5 rounded-full shimmer shrink-0"></div>
@@ -38,9 +42,64 @@ export default function ItineraryPanel() {
   const [expandedDayId, setExpandedDayId] = useState('day-1');
   const [activeRationaleId, setActiveRationaleId] = useState(null);
 
+  // Sync expandedDayId with state.highlightedDayId bi-directionally
+  useEffect(() => {
+    if (state.highlightedDayId) {
+      setExpandedDayId(state.highlightedDayId);
+    }
+  }, [state.highlightedDayId]);
+
   const toggleDay = (dayId) => {
-    setExpandedDayId(expandedDayId === dayId ? null : dayId);
+    const nextDayId = expandedDayId === dayId ? null : dayId;
+    setExpandedDayId(nextDayId);
+    // Dispatch highlight day so the map highlights/filters as well
+    dispatch({ type: 'HIGHLIGHT_DAY', payload: dayId });
   };
+
+  const visibleHomestays = state.highlightedDayId
+    ? state.homestays.filter(h => h.dayId === state.highlightedDayId)
+    : state.homestays;
+
+  // Scroll active stop into view smoothly
+  useEffect(() => {
+    if (state.activeStopId) {
+      const targetDay = state.trip.days.find(d => d.stops.some(s => s.id === state.activeStopId));
+      if (targetDay && expandedDayId !== targetDay.id) {
+        setExpandedDayId(targetDay.id);
+      }
+      
+      const timer = setTimeout(() => {
+        const activeElement = document.getElementById(`stop-row-${state.activeStopId}`);
+        if (activeElement) {
+          activeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [state.activeStopId]);
+
+  // Scroll expanded day into view
+  useEffect(() => {
+    if (expandedDayId) {
+      const activeDayElement = document.getElementById(`day-card-${expandedDayId}`);
+      if (activeDayElement) {
+        activeDayElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [expandedDayId]);
+
+  // Scroll selected homestay into view
+  useEffect(() => {
+    if (state.selectedHomestayId) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`homestay-card-${state.selectedHomestayId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [state.selectedHomestayId]);
 
   const handleDeleteStop = (dayId, stopId, e) => {
     e.stopPropagation();
@@ -53,10 +112,22 @@ export default function ItineraryPanel() {
   const handleSelectHomestay = (homestayId) => {
     const nextId = state.selectedHomestayId === homestayId ? null : homestayId;
     dispatch({ type: 'SELECT_HOMESTAY', payload: nextId });
+    if (nextId) {
+      const home = state.homestays.find(h => h.id === nextId);
+      if (home) {
+        window.dispatchEvent(new CustomEvent('map-pan-to', { detail: { lat: home.lat, lng: home.lng } }));
+      }
+    }
   };
 
   const handleHoverHomestay = (homestayId) => {
     dispatch({ type: 'HOVER_HOMESTAY', payload: homestayId });
+    if (homestayId) {
+      const home = state.homestays.find(h => h.id === homestayId);
+      if (home) {
+        window.dispatchEvent(new CustomEvent('map-pan-to', { detail: { lat: home.lat, lng: home.lng } }));
+      }
+    }
   };
 
   const handleStopHover = (stopId) => {
@@ -70,18 +141,46 @@ export default function ItineraryPanel() {
   const numDays = state.trip.days.length;
 
   return (
-    <div className="flex flex-col h-full bg-[rgba(22,29,27,0.4)] border-l border-white/[0.06] w-full md:w-[360px] shrink-0 overflow-hidden">
+    <div
+      className="flex flex-col h-full w-full md:w-[360px] shrink-0 overflow-hidden"
+      style={{
+        background: 'var(--surface)',
+        borderLeft: '1px solid var(--border)',
+        color: 'var(--text)',
+        transition: 'background 0.6s cubic-bezier(0.16, 1, 0.3, 1), border 0.6s cubic-bezier(0.16, 1, 0.3, 1), color 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
+      }}
+    >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between bg-[rgba(22,29,27,0.3)]">
-        <h2 className="font-bold text-xs flex items-center gap-2 text-white tracking-wide">
-          <div className="w-6 h-6 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center">
-            <svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <div
+        className="px-4 py-3 flex items-center justify-between"
+        style={{
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--surface-2)',
+          transition: 'background 0.6s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
+        }}
+      >
+        <h2 className="font-bold text-xs flex items-center gap-2 tracking-wide" style={{ color: 'var(--text)' }}>
+          <div
+            className="w-6 h-6 rounded-lg flex items-center justify-center"
+            style={{
+              background: 'var(--accent-dim)',
+              border: '1px solid var(--accent-border)'
+            }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: 'var(--accent)' }}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
             </svg>
           </div>
           Itinerary
         </h2>
-        <span className="text-[9px] text-muted font-mono bg-white/[0.04] border border-white/[0.05] px-2 py-0.5 rounded-md">
+        <span
+          className="text-[9px] font-mono px-2 py-0.5 rounded-md"
+          style={{
+            background: 'var(--surface-3)',
+            border: '1px solid var(--border)',
+            color: 'var(--muted)'
+          }}
+        >
           {state.trip.days.reduce((acc, d) => acc + d.stops.length, 0)} Stops · {numDays}D
         </span>
       </div>
@@ -110,10 +209,13 @@ export default function ItineraryPanel() {
                 return (
                   <div
                     key={day.id}
-                    className={`border rounded-2xl bg-[rgba(22,29,27,0.5)] overflow-hidden transition-all-300 ${
-                      isExpanded ? `border-white/[0.08] shadow-lg` : 'border-white/[0.04] hover:bg-[rgba(22,29,27,0.7)]'
-                    }`}
-                    style={isExpanded ? { borderColor: `${colorHex}20` } : {}}
+                    id={`day-card-${day.id}`}
+                    className="border rounded-2xl overflow-hidden transition-all duration-300"
+                    style={{
+                      background: 'var(--surface-2)',
+                      borderColor: isExpanded ? `${colorHex}40` : 'var(--border)',
+                      boxShadow: isExpanded ? '0 10px 25px -5px rgba(0,0,0,0.1)' : 'none'
+                    }}
                   >
                     {/* Day Header Accordion */}
                     <div
@@ -127,9 +229,9 @@ export default function ItineraryPanel() {
                           style={{ backgroundColor: colorHex }}
                         ></div>
                         <div>
-                          <h3 className="font-bold text-xs text-white flex items-center gap-1.5">
+                          <h3 className="font-bold text-xs flex items-center gap-1.5" style={{ color: 'var(--text)' }}>
                             Day {day.dayNumber}
-                            <span className="text-[9px] font-normal text-muted">
+                            <span style={{ color: 'var(--muted)', fontWeight: 'normal', fontSize: '9px' }}>
                               · {day.stops.length} locations
                             </span>
                           </h3>
@@ -137,16 +239,17 @@ export default function ItineraryPanel() {
                       </div>
 
                       <div className="flex items-center gap-2.5">
-                        <span className="font-mono text-[10px] text-muted">
+                        <span className="font-mono text-[10px]" style={{ color: 'var(--muted)' }}>
                           ¥{dayCost.toLocaleString()}
                         </span>
                         <svg
-                          className={`w-3.5 h-3.5 text-muted transition-transform duration-300 ${
+                          className={`w-3.5 h-3.5 transition-transform duration-300 ${
                             isExpanded ? 'rotate-180' : ''
                           }`}
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
+                          style={{ color: 'var(--muted)' }}
                         >
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
@@ -155,9 +258,12 @@ export default function ItineraryPanel() {
 
                     {/* Day Stops (Expanded Content) */}
                     {isExpanded && (
-                      <div className="px-3.5 pb-3.5 border-t border-white/[0.04] pt-2 space-y-1.5 slide-up">
+                      <div
+                        className="px-3.5 pb-3.5 pt-2 space-y-1.5 slide-up border-t"
+                        style={{ borderColor: 'var(--border)' }}
+                      >
                         {day.stops.length === 0 ? (
-                          <p className="text-[10px] text-muted py-3 text-center">No stops added yet</p>
+                          <p className="text-[10px] py-3 text-center" style={{ color: 'var(--muted)' }}>No stops added yet</p>
                         ) : (
                           day.stops.map((stop) => {
                             const isHovered = state.hoveredStopId === stop.id;
@@ -166,54 +272,62 @@ export default function ItineraryPanel() {
                             return (
                               <div key={stop.id} className="space-y-1">
                                 <div
+                                  id={`stop-row-${stop.id}`}
                                   onClick={() => handleStopClick(stop.id)}
                                   onMouseEnter={() => handleStopHover(stop.id)}
                                   onMouseLeave={() => handleStopHover(null)}
-                                  className={`p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all-300 group/stop cursor-pointer ${
-                                    isActive
-                                      ? 'bg-accent/5 border-accent/20 shadow-sm'
+                                  className="p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all duration-200 group/stop cursor-pointer"
+                                  style={{
+                                    background: isActive
+                                      ? 'var(--accent-dim)'
                                       : isHovered
-                                      ? 'bg-white/[0.04] border-white/[0.06]'
-                                      : 'bg-white/[0.01] border-white/[0.03] hover:bg-white/[0.03]'
-                                  }`}
+                                      ? 'var(--surface-3)'
+                                      : 'var(--surface)',
+                                    borderColor: isActive
+                                      ? 'var(--accent-border)'
+                                      : isHovered
+                                      ? 'var(--border)'
+                                      : 'var(--border)'
+                                  }}
                                 >
                                   <div className="flex items-start gap-2 min-w-0">
                                     {/* Drag handle */}
                                     <div className="flex flex-col gap-[2px] mt-1 opacity-0 group-hover/stop:opacity-40 transition-opacity cursor-grab shrink-0">
                                       <div className="flex gap-[2px]">
-                                        <span className="w-1 h-1 rounded-full bg-muted"></span>
-                                        <span className="w-1 h-1 rounded-full bg-muted"></span>
+                                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
+                                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
                                       </div>
                                       <div className="flex gap-[2px]">
-                                        <span className="w-1 h-1 rounded-full bg-muted"></span>
-                                        <span className="w-1 h-1 rounded-full bg-muted"></span>
+                                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
+                                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
                                       </div>
                                       <div className="flex gap-[2px]">
-                                        <span className="w-1 h-1 rounded-full bg-muted"></span>
-                                        <span className="w-1 h-1 rounded-full bg-muted"></span>
+                                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
+                                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
                                       </div>
                                     </div>
 
                                     {/* Index bubble */}
                                     <span
-                                      className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center font-mono text-[8px] font-bold text-bg"
-                                      style={{ backgroundColor: colorHex }}
+                                      className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center font-mono text-[8px] font-bold"
+                                      style={{ backgroundColor: colorHex, color: 'var(--bg)' }}
                                     >
                                       {stop.order}
                                     </span>
                                     <div className="min-w-0">
-                                      <h4 className="font-semibold text-white truncate text-[11px]">{stop.name}</h4>
-                                      <span className="text-[9px] text-muted font-mono">{stop.timeEstimate}</span>
+                                      <h4 className="font-semibold truncate text-[11px]" style={{ color: 'var(--text)' }}>{stop.name}</h4>
+                                      <span className="text-[9px] font-mono" style={{ color: 'var(--muted)' }}>{stop.timeEstimate}</span>
                                     </div>
                                   </div>
 
                                   <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="font-mono text-[9px] text-muted">
+                                    <span className="font-mono text-[9px]" style={{ color: 'var(--muted)' }}>
                                       {stop.costEstimate === 0 ? 'Free' : `¥${stop.costEstimate.toLocaleString()}`}
                                     </span>
                                     <button
                                       onClick={(e) => handleDeleteStop(day.id, stop.id, e)}
-                                      className="p-0.5 rounded text-muted hover:text-rose-400 hover:bg-white/[0.05] opacity-0 group-hover/stop:opacity-100 transition-all cursor-pointer"
+                                      className="p-0.5 rounded hover:text-rose-400 hover:bg-white/[0.05] opacity-0 group-hover/stop:opacity-100 transition-all cursor-pointer"
+                                      style={{ color: 'var(--muted)' }}
                                       title="Remove stop"
                                     >
                                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -223,24 +337,71 @@ export default function ItineraryPanel() {
                                   </div>
                                 </div>
 
-                                {/* Rationale Popover */}
+                                {/* Rationale & Nearby POIs Popover */}
                                 {isActive && (
-                                  <div className="mx-1 p-2.5 rounded-lg bg-accent/5 border border-accent/10 text-[10px] text-accent/80 leading-relaxed scale-in space-y-2 text-left">
+                                  <div
+                                    className="mx-1 p-2.5 rounded-lg text-[10px] leading-relaxed scale-in space-y-2.5 text-left border"
+                                    style={{
+                                      background: 'var(--accent-dim)',
+                                      borderColor: 'var(--accent-border)',
+                                      color: 'var(--text)'
+                                    }}
+                                  >
                                     <div>
-                                      <span className="font-bold uppercase tracking-wider text-[7px] text-accent block mb-1">
+                                      <span className="font-bold uppercase tracking-wider text-[7.5px] block mb-1" style={{ color: 'var(--accent)' }}>
                                         AI Rationale · Why this?
                                       </span>
                                       {stop.rationale}
                                     </div>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        window.dispatchEvent(new CustomEvent('show-nearby-places', { detail: stop }));
-                                      }}
-                                      className="w-full py-1 rounded bg-accent/10 hover:bg-accent/20 border border-accent/20 text-accent font-bold text-[9px] cursor-pointer transition-colors"
-                                    >
-                                      🔍 Show Nearby Places on Map
-                                    </button>
+
+                                    {/* Nearby Recommendations */}
+                                    <div className="pt-2.5 border-t" style={{ borderColor: 'var(--accent-border)' }}>
+                                      <span className="font-bold uppercase tracking-wider text-[7.5px] block mb-1.5 flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+                                        <span>📍</span> Nearby Cafes, Restaurants & Shops
+                                      </span>
+                                      {state.loadingPOIs ? (
+                                        <div className="flex items-center gap-1.5 py-1">
+                                          <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--accent)', animationDelay: '0ms' }}></span>
+                                          <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--accent)', animationDelay: '150ms' }}></span>
+                                          <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--accent)', animationDelay: '300ms' }}></span>
+                                          <span className="text-[8px] font-mono" style={{ color: 'var(--muted)' }}>Searching nearby places...</span>
+                                        </div>
+                                      ) : state.nearbyPOIs && state.nearbyPOIs.length > 0 ? (
+                                        <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1 no-scrollbar">
+                                          {state.nearbyPOIs.map((poi) => {
+                                            let icon = '📍';
+                                            if (poi.category === 'food') icon = '🍱';
+                                            else if (poi.category === 'cafe') icon = '☕';
+                                            else if (poi.category === 'sight') icon = '🏛️';
+                                            return (
+                                              <div 
+                                                key={poi.id} 
+                                                className="flex justify-between items-start gap-2 p-1.5 rounded border transition-colors cursor-pointer"
+                                                style={{
+                                                  background: 'var(--surface)',
+                                                  borderColor: 'var(--border)'
+                                                }}
+                                                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-border)'; }}
+                                                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                              >
+                                                <div className="min-w-0 flex-1">
+                                                  <div className="font-semibold truncate text-[9.5px] flex items-center gap-1" style={{ color: 'var(--text)' }}>
+                                                    <span>{icon}</span>
+                                                    <span>{poi.name}</span>
+                                                  </div>
+                                                  <div className="text-[8px] truncate" style={{ color: 'var(--muted)' }}>{poi.address}</div>
+                                                </div>
+                                                <div className="text-[8px] font-mono shrink-0 font-bold" style={{ color: 'var(--warm)' }}>
+                                                  ★ {poi.rating}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <div className="text-[8px]" style={{ color: 'var(--muted)' }}>No nearby places found.</div>
+                                      )}
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -249,22 +410,43 @@ export default function ItineraryPanel() {
                         )}
 
                         {/* Card Footer Totals */}
-                        <div className="pt-2 border-t border-white/[0.04] flex items-center justify-between font-mono text-[9px] text-muted mt-1">
+                        <div
+                          className="pt-2 border-t flex items-center justify-between font-mono text-[9px] mt-1"
+                          style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}
+                        >
                           <span className="flex items-center gap-1">
                             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                             </svg>
                             ~{estCommute} min transit
                           </span>
-                          <span className="font-semibold text-white/70">¥{dayCost.toLocaleString()}</span>
+                          <span className="font-semibold text-white/70" style={{ color: 'var(--text)' }}>¥{dayCost.toLocaleString()}</span>
                         </div>
 
                         {/* Add / Re-optimize Actions */}
                         <div className="pt-2 flex gap-1.5">
-                          <button className="flex-1 py-1.5 rounded-lg border border-white/[0.05] bg-white/[0.02] hover:bg-white/[0.05] text-[9px] text-muted hover:text-white font-semibold transition-all cursor-pointer">
+                          <button
+                            className="flex-1 py-1.5 rounded-lg border text-[9px] font-semibold transition-all cursor-pointer"
+                            style={{
+                              background: 'var(--surface)',
+                              borderColor: 'var(--border)',
+                              color: 'var(--muted)'
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text)'; e.currentTarget.style.borderColor = 'var(--accent-border)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--muted)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                          >
                             + Add Stop
                           </button>
-                          <button className="flex-1 py-1.5 rounded-lg border border-accent/10 bg-accent/5 hover:bg-accent/10 text-[9px] text-accent font-semibold transition-all cursor-pointer">
+                          <button
+                            className="flex-1 py-1.5 rounded-lg text-[9px] font-semibold transition-all cursor-pointer"
+                            style={{
+                              background: 'var(--accent-dim)',
+                              border: '1px solid var(--accent-border)',
+                              color: 'var(--accent)'
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(232,93,58,0.15)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-dim)'; }}
+                          >
                             Re-optimize
                           </button>
                         </div>
@@ -277,46 +459,60 @@ export default function ItineraryPanel() {
 
             {/* Homestay Recommendations Section */}
             {state.homestays.length > 0 && (
-              <div className="space-y-3 pt-3 border-t border-white/[0.06]">
+              <div
+                className="space-y-3 pt-3 border-t"
+                style={{ borderColor: 'var(--border)' }}
+              >
                 <div>
-                  <h3 className="font-bold text-xs text-white flex items-center gap-2">
-                    <div className="w-5 h-5 rounded-md bg-accent/10 border border-accent/20 flex items-center justify-center">
-                      <svg className="w-3 h-3 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <h3 className="font-bold text-xs flex items-center gap-2" style={{ color: 'var(--text)' }}>
+                    <div
+                      className="w-5 h-5 rounded-md flex items-center justify-center"
+                      style={{
+                        background: 'var(--accent-dim)',
+                        border: '1px solid var(--accent-border)'
+                      }}
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: 'var(--accent)' }}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
                       </svg>
                     </div>
                     Lodging Matches
                   </h3>
-                  <p className="text-[9px] text-muted mt-0.5 ml-7">Ranked by route fit, price & ratings</p>
+                  <p className="text-[9px] mt-0.5 ml-7" style={{ color: 'var(--muted)' }}>Ranked by route fit, price & ratings</p>
                 </div>
 
                 <div className="space-y-2 stagger-children">
-                  {state.homestays.map((home) => {
+                  {visibleHomestays.map((home) => {
                     const isSelected = state.selectedHomestayId === home.id;
                     return (
                       <div
                         key={home.id}
+                        id={`homestay-card-${home.id}`}
                         onMouseEnter={() => handleHoverHomestay(home.id)}
                         onMouseLeave={() => handleHoverHomestay(null)}
-                        className={`p-3.5 rounded-2xl border transition-all-300 cursor-pointer ${
-                          isSelected
-                            ? 'bg-accent/5 border-accent/20 shadow-lg shadow-accent/5'
-                            : 'bg-[rgba(22,29,27,0.4)] border-white/[0.04] hover:bg-[rgba(22,29,27,0.6)] hover:border-white/[0.08]'
-                        }`}
+                        className="p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer"
+                        style={{
+                          background: isSelected
+                            ? 'var(--accent-dim)'
+                            : 'var(--surface-2)',
+                          borderColor: isSelected
+                            ? 'var(--accent-border)'
+                            : 'var(--border)'
+                        }}
                       >
                         <div className="flex justify-between items-start">
-                          <h4 className="font-bold text-[11px] text-white flex items-center gap-1.5">
+                          <h4 className="font-bold text-[11px] flex items-center gap-1.5" style={{ color: 'var(--text)' }}>
                             <span className="text-sm opacity-70">⌂</span>
                             {home.name}
                           </h4>
-                          <div className="flex items-center gap-1 text-[9px] font-mono text-amber-400">
+                          <div className="flex items-center gap-1 text-[9px] font-mono" style={{ color: 'var(--warm)' }}>
                             <span>★</span>
                             <span>{home.rating}</span>
-                            <span className="text-muted">({home.reviewCount})</span>
+                            <span style={{ color: 'var(--muted)' }}>({home.reviewCount})</span>
                           </div>
                         </div>
 
-                        <p className="text-[9px] text-accent font-medium mt-1.5 font-mono flex items-center gap-1">
+                        <p className="text-[9px] font-medium mt-1.5 font-mono flex items-center gap-1" style={{ color: 'var(--accent)' }}>
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                           </svg>
@@ -327,29 +523,42 @@ export default function ItineraryPanel() {
                           {home.amenities.map((amenity, idx) => (
                             <span
                               key={idx}
-                              className="px-1.5 py-0.5 rounded bg-white/[0.03] border border-white/[0.04] text-[8px] text-muted font-mono"
+                              className="px-1.5 py-0.5 rounded border text-[8px] font-mono"
+                              style={{
+                                background: 'var(--surface-3)',
+                                borderColor: 'var(--border)',
+                                color: 'var(--muted)'
+                              }}
                             >
                               {amenity}
                             </span>
                           ))}
                         </div>
 
-                        <div className="h-[1px] bg-white/[0.04] my-2.5"></div>
+                        <div className="h-[1px] my-2.5" style={{ background: 'var(--border)' }}></div>
 
                         <div className="flex justify-between items-center">
                           <div>
-                            <span className="font-mono text-xs font-bold text-white">
+                            <span className="font-mono text-xs font-bold" style={{ color: 'var(--text)' }}>
                               ¥{home.pricePerNight.toLocaleString()}
                             </span>
-                            <span className="text-[8px] text-muted"> / night</span>
+                            <span className="text-[8px]" style={{ color: 'var(--muted)' }}> / night</span>
                           </div>
                           <button
                             onClick={() => handleSelectHomestay(home.id)}
-                            className={`px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all transform active:scale-95 cursor-pointer ${
+                            className="px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all transform active:scale-95 cursor-pointer"
+                            style={
                               isSelected
-                                ? 'bg-accent text-bg hover:bg-accent/80'
-                                : 'bg-white/[0.04] text-white hover:bg-white/[0.08] border border-white/[0.06]'
-                            }`}
+                                ? {
+                                    background: 'var(--accent)',
+                                    color: 'var(--bg)'
+                                  }
+                                : {
+                                    background: 'var(--surface-3)',
+                                    border: '1px solid var(--border)',
+                                    color: 'var(--text)'
+                                  }
+                            }
                           >
                             {isSelected ? '✓ Selected' : 'Choose'}
                           </button>

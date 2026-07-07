@@ -1,7 +1,9 @@
 /* eslint-disable */
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useTrip } from '../../context/TripContext';
+import { useTheme } from '../../context/ThemeContext';
 import { getDayColorHex } from '../../utils/colors';
+import { haversine, getTravelLabel } from '../../utils/haversine';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -12,6 +14,7 @@ const SVG_H = 400;
 
 export default function MapPanel() {
   const { state, dispatch } = useTrip();
+  const { theme } = useTheme();
   const mapContainerRef = useRef(null);
   const [mapError, setMapError] = useState(null);
   const mapRef = useRef(null);
@@ -19,7 +22,7 @@ export default function MapPanel() {
   const popupRef = useRef(null);
 
   const [routesData, setRoutesData] = useState({});
-  const [nearbyPOIs, setNearbyPOIs] = useState([]);
+  // Using state.nearbyPOIs from global context
 
   // SVG panning state
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: SVG_W, h: SVG_H });
@@ -28,6 +31,7 @@ export default function MapPanel() {
   const useMockMap = mapError !== null;
 
   const mapLayer = state.mapLayer; // 'stops' | 'homestays'
+  const highlightedDayId = state.highlightedDayId;
 
   // Handle stop click on the map
   const handleMapStopClick = useCallback((stopId) => {
@@ -40,11 +44,30 @@ export default function MapPanel() {
 
   // Handle homestay click on the map
   const handleMapHomestayClick = useCallback((homestayId) => {
+    const nextId = state.selectedHomestayId === homestayId ? null : homestayId;
+    dispatch({
+      type: 'SELECT_HOMESTAY',
+      payload: nextId,
+    });
     dispatch({
       type: 'SELECT_HOMESTAY_ON_MAP',
       payload: state.activeHomestayOnMapId === homestayId ? null : homestayId,
     });
-  }, [state.activeHomestayOnMapId, dispatch]);
+  }, [state.selectedHomestayId, state.activeHomestayOnMapId, dispatch]);
+
+  // Toggle AI chat panel visibility
+  const handleToggleChat = useCallback(() => {
+    if (window.innerWidth <= 768) {
+      dispatch({ type: 'SET_ACTIVE_TAB', payload: state.activeTab === 'chat' ? 'map' : 'chat' });
+    } else {
+      dispatch({ type: 'TOGGLE_CHAT' });
+    }
+  }, [state.activeTab, dispatch]);
+
+  // Toggle homestay pin visibility on the map
+  const handleToggleHomestays = useCallback(() => {
+    dispatch({ type: 'TOGGLE_HOMESTAYS' });
+  }, [dispatch]);
 
   // Track hovered/selected homestay for drawing commute lines
   const activeHomestayId = state.hoveredHomestayId || state.selectedHomestayId;
@@ -99,7 +122,7 @@ export default function MapPanel() {
     if (!state.activeStopId) return null;
     for (const day of state.trip.days) {
       const stop = day.stops.find(s => s.id === state.activeStopId);
-      if (stop) return { ...stop, dayColorHue: day.colorHue };
+      if (stop) return { ...stop, dayColorHue: day.colorHue, dayId: day.id };
     }
     return null;
   }, [state.activeStopId, state.trip.days]);
@@ -112,7 +135,6 @@ export default function MapPanel() {
       const activeDay = state.trip.days.find(d => d.stops.some(s => s.id === activeStop.id));
 
       if (activeDay && activeDay.stops.length > 1) {
-        // Fit all stops of the active day in the viewBox with padding
         const xs = activeDay.stops.map(s => mapCoordsToSvg(s.lat, s.lng).x);
         const ys = activeDay.stops.map(s => mapCoordsToSvg(s.lat, s.lng).y);
         const minX = Math.min(...xs);
@@ -128,7 +150,6 @@ export default function MapPanel() {
         setViewBox({ x: vx, y: vy, w: vw, h: vh });
         setZoomLevel(SVG_W / vw);
       } else {
-        // Single stop — gentle 1.6x zoom, centred on stop
         const { x, y } = mapCoordsToSvg(activeStop.lat, activeStop.lng);
         const zW = SVG_W / 1.6;
         const zH = SVG_H / 1.6;
@@ -247,7 +268,8 @@ export default function MapPanel() {
     setZoomLevel(1);
     dispatch({ type: 'SELECT_STOP', payload: null });
     dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
-    setNearbyPOIs([]);
+    dispatch({ type: 'HIGHLIGHT_DAY', payload: null }); // reset highlight
+    dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
   };
 
   // Compute center of gravity for a day's stops
@@ -266,6 +288,11 @@ export default function MapPanel() {
     const avgLng = day.stops.reduce((s, st) => s + st.lng, 0) / day.stops.length;
     return [avgLng, avgLat];
   }, [state.trip.days]);
+
+  // Legend click handler
+  const handleLegendClick = useCallback((dayId) => {
+    dispatch({ type: 'HIGHLIGHT_DAY', payload: dayId });
+  }, [dispatch]);
 
   // Fetch routes from backend OpenRouteService Directions proxy
   useEffect(() => {
@@ -304,15 +331,15 @@ export default function MapPanel() {
     }
   }, [state.trip.days, useMockMap]);
 
-  // Show Nearby Places helper
-  const handleShowNearbyPlaces = async (stop) => {
+  // Show Nearby Places helper (dispatches to global context)
+  const handleShowNearbyPlaces = useCallback(async (stop) => {
+    dispatch({ type: 'SET_LOADING_POIS', payload: true });
     try {
       const response = await fetch(`/api/poi?lat=${stop.lat}&lng=${stop.lng}&radius=500`);
       if (response.ok) {
         const pois = await response.json();
-        setNearbyPOIs(pois);
+        dispatch({ type: 'SET_NEARBY_POIS', payload: pois });
         
-        // Auto center map to the stop
         if (mapRef.current) {
           mapRef.current.easeTo({
             center: [stop.lng, stop.lat],
@@ -323,17 +350,37 @@ export default function MapPanel() {
       }
     } catch (err) {
       console.error('Failed to fetch nearby POIs:', err);
+    } finally {
+      dispatch({ type: 'SET_LOADING_POIS', payload: false });
     }
-  };
+  }, [dispatch]);
+
+  // Fetch nearby POIs automatically when activeStop changes
+  useEffect(() => {
+    if (state.activeStopId) {
+      const stop = state.trip.days
+        .flatMap(d => d.stops)
+        .find(s => s.id === state.activeStopId);
+      if (stop) {
+        handleShowNearbyPlaces(stop);
+      }
+    } else {
+      dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
+    }
+  }, [state.activeStopId, state.trip.days, handleShowNearbyPlaces, dispatch]);
 
   // MapLibre Live initialization
   useEffect(() => {
     if (useMockMap || !mapContainerRef.current) return;
 
     try {
+      const initialStyleUrl = theme === 'sunset'
+        ? 'https://tiles.openfreemap.org/styles/positron'
+        : 'https://tiles.openfreemap.org/styles/dark';
+
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: 'https://tiles.openfreemap.org/styles/dark',
+        style: initialStyleUrl,
         center: [139.75, 35.68],
         zoom: 11,
         attributionControl: false,
@@ -346,8 +393,6 @@ export default function MapPanel() {
         setMapError('Failed to load MapLibre style. Using local interactive canvas.');
       });
 
-      map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
       return () => {
         map.remove();
       };
@@ -356,6 +401,22 @@ export default function MapPanel() {
       setMapError(err instanceof Error ? err.message : 'MapLibre initialization failed');
     }
   }, [useMockMap]);
+
+  // Update map style dynamically on theme changes
+  useEffect(() => {
+    if (mapRef.current && !useMockMap) {
+      const styleUrl = theme === 'sunset'
+        ? 'https://tiles.openfreemap.org/styles/positron'
+        : 'https://tiles.openfreemap.org/styles/dark';
+      const map = mapRef.current;
+      map.setStyle(styleUrl);
+      // After setStyle, all sources/layers are wiped. Force re-sync by
+      // updating routesData identity so the syncMapData effect re-fires.
+      map.once('styledata', () => {
+        setRoutesData(prev => ({ ...prev }));
+      });
+    }
+  }, [theme, useMockMap]);
 
   // Auto-fit bounds on load/trip change
   useEffect(() => {
@@ -427,144 +488,139 @@ export default function MapPanel() {
         if (map.getSource(commuteSourceId)) map.removeSource(commuteSourceId);
       });
 
-      if (mapLayer === 'stops') {
-        // Find which day the active stop belongs to
-        let activeDayId = null;
-        if (state.activeStopId) {
-          for (const day of state.trip.days) {
-            if (day.stops.some(s => s.id === state.activeStopId)) {
-              activeDayId = day.id;
-              break;
-            }
-          }
-        }
+      // Always render routes and stops
+      const isActiveDay = (dayId) => !highlightedDayId || dayId === highlightedDayId;
 
-        state.trip.days.forEach(day => {
-          const routeGeoJSON = routesData[day.id];
-          if (!routeGeoJSON) return;
+      state.trip.days.forEach(day => {
+        const routeGeoJSON = routesData[day.id];
+        if (!routeGeoJSON) return;
 
-          const sourceId = `route-source-day-${day.id}`;
-          const layerId = `route-day-${day.id}`;
-          const color = getDayColorHex(day.colorHue);
-          
-          // Active day = bright + wide, inactive days = dimmed + thin
-          const isActive = !activeDayId || day.id === activeDayId;
-          const lineWidth = isActive ? 5 : 2;
-          const lineOpacity = isActive ? 0.95 : 0.25;
+        const sourceId = `route-source-day-${day.id}`;
+        const layerId = `route-day-${day.id}`;
+        const color = getDayColorHex(day.colorHue);
+        
+        const active = isActiveDay(day.id);
+        const lineWidth = active ? 5 : 2;
+        const lineOpacity = active ? 0.95 : 0.15;
 
-          map.addSource(sourceId, {
-            type: 'geojson',
-            data: routeGeoJSON
-          });
-
-          map.addLayer({
-            id: layerId,
-            type: 'line',
-            source: sourceId,
-            layout: {
-              'line-join': 'round',
-              'line-cap': 'round'
-            },
-            paint: {
-              'line-color': color,
-              'line-width': lineWidth,
-              'line-opacity': lineOpacity
-            }
-          });
+        map.addSource(sourceId, {
+          type: 'geojson',
+          data: routeGeoJSON
         });
-      }
 
-      if (mapLayer === 'stops') {
-        state.trip.days.forEach(day => {
-          day.stops.forEach((stop, idx) => {
-            const el = document.createElement('div');
-            el.className = 'custom-stop-marker flex items-center justify-center cursor-pointer transition-all duration-300 font-sans';
-            
-            const color = getDayColorHex(day.colorHue);
-            el.style.backgroundColor = color;
-            el.style.color = '#0e1513';
-            el.style.width = '24px';
-            el.style.height = '24px';
-            el.style.borderRadius = '50%';
-            el.style.fontWeight = 'bold';
-            el.style.fontSize = '12px';
-            el.style.border = '2px solid white';
-            el.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
-            el.innerText = `${idx + 1}`;
+        map.addLayer({
+          id: layerId,
+          type: 'line',
+          source: sourceId,
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': color,
+            'line-width': lineWidth,
+            'line-opacity': lineOpacity
+          }
+        });
+      });
 
-            if (state.activeStopId === stop.id) {
-              el.classList.add('pulse-glow', 'scale-110');
-              el.style.border = `2px solid ${color}`;
-              el.style.boxShadow = `0 0 15px ${color}`;
-            }
+      state.trip.days.forEach((day, dayIdx) => {
+        const isActiveDayForMarkers = !highlightedDayId || day.id === highlightedDayId;
 
-            el.addEventListener('click', (e) => {
-              e.stopPropagation();
-              handleMapStopClick(stop.id);
-            });
+        day.stops.forEach((stop, idx) => {
+          const el = document.createElement('div');
+          el.className = 'stop-marker';
+          
+          const color = getDayColorHex(day.colorHue);
+          el.style.backgroundColor = color;
+          el.style.color = '#0a0c10';
+          el.innerText = `${idx + 1}`;
 
-            el.addEventListener('mouseenter', () => {
-              handleMapStopHover(stop.id);
-            });
-            el.addEventListener('mouseleave', () => {
-              handleMapStopHover(null);
-            });
+          // Dim if not active day
+          if (!isActiveDayForMarkers) {
+            el.style.opacity = '0.2';
+            el.style.animation = 'none';
+          }
 
-            const marker = new maplibregl.Marker({ element: el })
-              .setLngLat([stop.lng, stop.lat])
+          // Highlight active stop without overwriting MapLibre's transform
+          if (state.activeStopId === stop.id) {
+            el.style.outline = `2px solid ${color}`;
+            el.style.outlineOffset = '2px';
+            el.style.boxShadow = `0 0 15px ${color}`;
+          }
+
+          el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleMapStopClick(stop.id);
+          });
+
+          el.addEventListener('mouseenter', () => {
+            handleMapStopHover(stop.id);
+          });
+          el.addEventListener('mouseleave', () => {
+            handleMapStopHover(null);
+          });
+
+          const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+            .setLngLat([stop.lng, stop.lat])
+            .addTo(map);
+
+          markersRef.current.push(marker);
+        });
+
+        // Travel-time labels between consecutive stops
+        if (day.stops.length >= 2 && isActiveDayForMarkers) {
+          for (let i = 0; i < day.stops.length - 1; i++) {
+            const s1 = day.stops[i];
+            const s2 = day.stops[i + 1];
+            const midLat = (s1.lat + s2.lat) / 2;
+            const midLng = (s1.lng + s2.lng) / 2;
+            const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
+            const travelTime = getTravelLabel(dist);
+
+            const labelEl = document.createElement('div');
+            labelEl.className = 'route-time-label';
+            labelEl.textContent = travelTime;
+
+            const labelMarker = new maplibregl.Marker({
+              element: labelEl,
+              anchor: 'center',
+            })
+              .setLngLat([midLng, midLat])
               .addTo(map);
 
-            markersRef.current.push(marker);
-          });
-        });
-      }
+            markersRef.current.push(labelMarker);
+          }
+        }
+      });
 
-      if (mapLayer === 'stops' && state.activeStopId) {
+      // Active stop popup
+      if (state.activeStopId) {
         const stop = activeStop;
         if (stop) {
           const dayColor = getDayColorHex(stop.dayColorHue);
           const popupContent = document.createElement('div');
-          popupContent.className = 'glass-panel rounded-2xl p-3.5 min-w-[220px] max-w-[280px] shadow-2xl border border-white/[0.1] relative text-left font-sans';
+          popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
           
           popupContent.innerHTML = `
-            <div class="flex items-center gap-2 mb-2">
-              <span class="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono border" style="background-color: ${dayColor}15; border-color: ${dayColor}30; color: ${dayColor};">
-                STOP
-              </span>
-              <span class="text-[9px] text-muted font-mono">${stop.timeEstimate || 'No time set'}</span>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.4); min-width: 220px; max-width: 280px;">
+              <div style="height: 3px; background: ${dayColor}; border-radius: 2px 2px 0 0;"></div>
+              <div style="padding: 14px 16px;">
+                <div style="font-size: 14px; font-weight: 700; margin-bottom: 4px; color: var(--text);">${stop.name}</div>
+                <div style="display: flex; gap: 8px; font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
+                  <span>${stop.timeEstimate || ''}</span>
+                  ${stop.costEstimate > 0 ? `<span>·</span><span>¥${stop.costEstimate.toLocaleString()}</span>` : '<span>·</span><span>Free</span>'}
+                </div>
+                <div style="font-size: 12px; color: var(--muted); line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${stop.rationale}</div>
+                <div style="display: flex; gap: 6px; margin-top: 10px;">
+                  <button class="nearby-btn" style="flex: 1; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🔍 Nearby</button>
+                  <button class="delete-btn" style="padding: 6px 10px; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🗑️</button>
+                </div>
+              </div>
             </div>
-            
-            <h4 class="font-bold text-xs text-white mb-1.5 leading-snug">${stop.name}</h4>
-            
-            <div class="flex items-center gap-3 mb-2.5 font-mono text-[9px]">
-              <span class="text-white flex items-center gap-0.5">
-                💰 Cost: ${stop.costEstimate === 0 ? 'Free' : `¥${stop.costEstimate.toLocaleString()}`}
-              </span>
-            </div>
-
-            <div class="bg-white/[0.03] border border-white/[0.05] rounded-lg p-2 mb-2.5">
-              <span class="text-[7px] text-muted font-bold uppercase tracking-widest block mb-0.5">Why Picked</span>
-              <p class="text-[8px] text-muted leading-relaxed">${stop.rationale}</p>
-            </div>
-
-            <div class="flex gap-1.5 font-sans">
-              <button class="nearby-btn flex-1 py-1.5 rounded-lg text-[9px] font-bold bg-accent text-bg hover:bg-accent/80 transition-all transform active:scale-95 cursor-pointer">
-                🔍 Nearby Places
-              </button>
-              <button class="delete-btn py-1.5 px-2.5 rounded-lg text-[9px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all transform active:scale-95 cursor-pointer">
-                🗑️ Delete
-              </button>
-            </div>
-
-            <button class="close-btn absolute top-2 right-2 w-5 h-5 rounded-full bg-white/[0.05] border border-white/[0.1] flex items-center justify-center text-muted hover:text-white transition-colors cursor-pointer">
-              <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
           `;
 
-          const day = state.trip.days.find(d => d.stops.some(s => s.id === stop.id));
-          const dayId = day ? day.id : null;
+          const dayId = stop.dayId;
 
           popupContent.querySelector('.nearby-btn').addEventListener('click', (e) => {
             e.stopPropagation();
@@ -579,12 +635,7 @@ export default function MapPanel() {
             }
           });
 
-          popupContent.querySelector('.close-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            dispatch({ type: 'SELECT_STOP', payload: null });
-          });
-
-          const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 15 })
+          const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, offset: 15 })
             .setLngLat([stop.lng, stop.lat])
             .setDOMContent(popupContent)
             .addTo(map);
@@ -593,8 +644,13 @@ export default function MapPanel() {
         }
       }
 
-      if (mapLayer === 'homestays') {
-        state.homestays.forEach(home => {
+      // Render homestays overlay if showHomestays is true
+      if (state.showHomestays) {
+        const visibleHomestays = state.highlightedDayId
+          ? state.homestays.filter(h => h.dayId === state.highlightedDayId)
+          : state.homestays;
+
+        visibleHomestays.forEach(home => {
           const el = document.createElement('div');
           el.className = 'custom-homestay-marker cursor-pointer transition-all duration-300';
           
@@ -603,12 +659,11 @@ export default function MapPanel() {
           const isHighlighted = isSelected || isHovered;
 
           el.innerHTML = `
-            <div class="w-8 h-8 rounded-lg bg-[#161d1b] border border-accent/40 flex items-center justify-center text-accent shadow-lg hover:border-accent hover:scale-105 transition-all duration-200 ${
-              isHighlighted ? 'glow-accent-strong scale-110 border-accent bg-accent-dim' : ''
-            }">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center shadow-lg relative" style="background: ${isHighlighted ? 'var(--accent)' : 'var(--surface)'}; border: 1.5px solid ${isHighlighted ? 'var(--accent)' : 'var(--border)'}; color: ${isHighlighted ? 'var(--bg)' : 'var(--accent)'}; transition: all 0.3s; transform: ${isHighlighted ? 'scale(1.25)' : 'scale(1)'};">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
               </svg>
+              ${isHighlighted ? `<div class="absolute -inset-1 rounded-lg border border-accent animate-ping opacity-60" style="pointer-events: none;"></div>` : ''}
             </div>
           `;
 
@@ -624,7 +679,7 @@ export default function MapPanel() {
             dispatch({ type: 'HOVER_HOMESTAY', payload: null });
           });
 
-          const marker = new maplibregl.Marker({ element: el })
+          const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
             .setLngLat([home.lng, home.lat])
             .addTo(map);
 
@@ -632,114 +687,40 @@ export default function MapPanel() {
         });
       }
 
-      if (activeHomestay) {
-        state.trip.days.forEach(day => {
-          const cog = getDayCogLatLng(day.id);
-          if (!cog) return;
-
-          const sourceId = `commute-source-day-${day.id}`;
-          const layerId = `commute-day-${day.id}`;
-
-          const geojson = {
-            type: 'Feature',
-            geometry: {
-              type: 'LineString',
-              coordinates: [
-                [activeHomestay.lng, activeHomestay.lat],
-                cog
-              ]
-            }
-          };
-
-          map.addSource(sourceId, {
-            type: 'geojson',
-            data: geojson
-          });
-
-          map.addLayer({
-            id: layerId,
-            type: 'line',
-            source: sourceId,
-            paint: {
-              'line-color': '#2dd4bf',
-              'line-width': 2,
-              'line-dasharray': [3, 3]
-            }
-          });
-        });
-      }
-
-      if (mapLayer === 'homestays' && activeHomestayOnMap) {
+      // Homestay popover on map
+      if (state.showHomestays && activeHomestayOnMap) {
         const home = activeHomestayOnMap;
         const isSelected = state.selectedHomestayId === home.id;
         const popupContent = document.createElement('div');
-        popupContent.className = 'glass-panel rounded-2xl p-3.5 min-w-[220px] max-w-[280px] shadow-2xl border border-white/[0.1] relative text-left font-sans';
+        popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
         
         popupContent.innerHTML = `
-          <div class="h-14 rounded-xl mb-2.5 flex items-center justify-center bg-gradient-to-br from-accent/20 via-accent/5 to-transparent">
-            <span class="text-2xl">🏠</span>
-          </div>
-
-          <div class="flex items-start justify-between mb-1.5">
-            <h4 class="font-bold text-xs text-white leading-snug">${home.name}</h4>
-            <div class="flex items-center gap-0.5 text-[9px] font-mono text-amber-400 shrink-0 ml-2">
-              <span>★</span>
-              <span>${home.rating}</span>
-              <span class="text-muted">(${home.reviewCount})</span>
+          <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.4); min-width: 220px; max-width: 280px;">
+            <div style="height: 3px; background: var(--warm); border-radius: 2px 2px 0 0;"></div>
+            <div style="padding: 14px 16px;">
+              <div style="font-size: 14px; font-weight: 700; margin-bottom: 4px; color: var(--text);">${home.name}</div>
+              <div style="display: flex; gap: 8px; font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
+                <span>★ ${home.rating}</span>
+                <span>·</span>
+                <span>¥${home.pricePerNight.toLocaleString()}/night</span>
+                <span>·</span>
+                <span>${home.avgCommuteMinutes}min avg</span>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
+                ${home.amenities.slice(0, 4).map(a => `<span style="padding: 2px 6px; border-radius: 4px; background: var(--surface-2); font-size: 9px; color: var(--muted); font-family: 'JetBrains Mono', monospace;">${a}</span>`).join('')}
+              </div>
+              <div style="font-size: 12px; color: var(--muted); line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${home.rationale}</div>
+              <button class="select-btn" style="display: block; width: 100%; padding: 8px 0; margin-top: 10px; background: ${isSelected ? 'var(--accent)' : 'var(--surface-2)'}; color: ${isSelected ? 'var(--bg)' : 'var(--text)'}; border: 1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;">${isSelected ? '✓ Selected as Lodging' : 'Choose This Homestay'}</button>
             </div>
           </div>
-
-          <div class="flex items-center gap-3 mb-2.5 font-mono">
-            <span class="text-sm font-bold text-white">
-              ¥${home.pricePerNight.toLocaleString()}
-              <span class="text-[8px] text-muted font-normal"> /night</span>
-            </span>
-            <span class="text-[9px] text-accent flex items-center gap-0.5 font-sans">
-              <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
-              ${home.avgCommuteMinutes}min avg
-            </span>
-          </div>
-
-          <div class="flex flex-wrap gap-1 mb-2.5">
-            ${home.amenities.slice(0, 4).map(amenity => `
-              <span class="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.05] text-[7px] text-muted font-mono">
-                ${amenity}
-              </span>
-            `).join('')}
-          </div>
-
-          <div class="bg-accent/5 border border-accent/10 rounded-lg p-2 mb-2.5">
-            <span class="text-[7px] text-accent font-bold uppercase tracking-widest block mb-0.5">Route Fit</span>
-            <p class="text-[8px] text-accent/70 leading-relaxed">${home.rationale}</p>
-          </div>
-
-          <button class="select-btn w-full py-2 rounded-lg text-[10px] font-bold transition-all transform active:scale-95 cursor-pointer ${
-            isSelected
-              ? 'bg-accent text-bg hover:bg-accent/80'
-              : 'bg-white/[0.05] text-white hover:bg-white/[0.1] border border-white/[0.08]'
-          }">
-            ${isSelected ? '✓ Selected as Lodging' : 'Choose This Homestay'}
-          </button>
-
-          <button class="close-btn absolute top-2 right-2 w-5 h-5 rounded-full bg-white/[0.05] border border-white/[0.1] flex items-center justify-center text-muted hover:text-white transition-colors cursor-pointer">
-            <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
         `;
 
         popupContent.querySelector('.select-btn').addEventListener('click', (e) => {
           e.stopPropagation();
           dispatch({ type: 'SELECT_HOMESTAY', payload: isSelected ? null : home.id });
         });
-        popupContent.querySelector('.close-btn').addEventListener('click', (e) => {
-          e.stopPropagation();
-          dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
-        });
 
-        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 25 })
+        const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, offset: 25 })
           .setLngLat([home.lng, home.lat])
           .setDOMContent(popupContent)
           .addTo(map);
@@ -747,37 +728,21 @@ export default function MapPanel() {
         popupRef.current = popup;
       }
 
-      if (nearbyPOIs.length > 0) {
-        nearbyPOIs.forEach((poi) => {
+      // Nearby POI markers
+      // Nearby POI markers
+      if (state.nearbyPOIs.length > 0) {
+        state.nearbyPOIs.forEach((poi) => {
           const el = document.createElement('div');
-          el.className = 'custom-poi-marker cursor-pointer transition-all duration-300';
+          el.className = 'custom-poi-marker cursor-pointer';
           
           let icon = '📍';
-          let bgColor = 'rgba(255,255,255,0.1)';
-          let borderColor = 'rgba(255,255,255,0.4)';
-          let color = '#fff';
-
-          if (poi.category === 'food') {
-            icon = '🍱';
-            bgColor = 'rgba(251, 191, 36, 0.15)';
-            borderColor = 'rgba(251, 191, 36, 0.4)';
-            color = '#fbbf24';
-          } else if (poi.category === 'cafe') {
-            icon = '☕';
-            bgColor = 'rgba(163, 230, 53, 0.15)';
-            borderColor = 'rgba(163, 230, 53, 0.4)';
-            color = '#a3e635';
-          } else if (poi.category === 'sight') {
-            icon = '🏛️';
-            bgColor = 'rgba(192, 132, 252, 0.15)';
-            borderColor = 'rgba(192, 132, 252, 0.4)';
-            color = '#c084fc';
-          }
+          if (poi.category === 'food') icon = '🍱';
+          else if (poi.category === 'cafe') icon = '☕';
+          else if (poi.category === 'sight') icon = '🏛️';
 
           el.innerHTML = `
-            <div class="w-8 h-8 rounded-full border flex items-center justify-center shadow-lg hover:scale-110 transition-all duration-200"
-                 style="background-color: ${bgColor}; border-color: ${borderColor}; color: ${color};">
-              <span class="text-xs">${icon}</span>
+            <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer;">
+              ${icon}
             </div>
           `;
 
@@ -785,26 +750,14 @@ export default function MapPanel() {
             e.stopPropagation();
             
             const popupContent = document.createElement('div');
-            popupContent.className = 'glass-panel rounded-2xl p-3.5 min-w-[200px] max-w-[250px] shadow-2xl border border-white/[0.1] relative text-left font-sans';
+            popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
             popupContent.innerHTML = `
-              <div class="flex items-center gap-1.5 mb-1.5 text-[8px] text-muted font-mono uppercase tracking-wide">
-                <span>${poi.category}</span>
-                <span>•</span>
-                <span class="text-amber-400">★ ${poi.rating}</span>
-                <span>(${poi.reviewsCount})</span>
+              <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 200px; box-shadow: 0 8px 30px rgba(0,0,0,0.4);">
+                <div style="font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 4px;">${poi.category} · ★ ${poi.rating} (${poi.reviewsCount})</div>
+                <div style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px;">${poi.name}</div>
+                <div style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">${poi.address}</div>
+                <button class="add-poi-btn" style="width: 100%; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">➕ Add to Itinerary</button>
               </div>
-              <h4 class="font-bold text-xs text-white mb-1.5 leading-snug">${poi.name}</h4>
-              <p class="text-[9px] text-muted mb-2">${poi.address}</p>
-              
-              <button class="add-poi-btn w-full py-1.5 rounded-lg text-[9px] font-bold bg-accent text-bg hover:bg-accent/80 transition-all transform active:scale-95 cursor-pointer">
-                ➕ Add to Itinerary
-              </button>
-              
-              <button class="close-btn absolute top-2 right-2 w-4 h-4 rounded-full bg-white/[0.05] border border-white/[0.1] flex items-center justify-center text-muted hover:text-white transition-colors cursor-pointer">
-                <svg class="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
             `;
 
             popupContent.querySelector('.add-poi-btn').addEventListener('click', (ev) => {
@@ -822,38 +775,23 @@ export default function MapPanel() {
                 lng: poi.lng,
                 timeEstimate: '01:00 PM - 02:00 PM',
                 costEstimate: 0,
-                rationale: `Added from nearby recommendations near your itinerary stops. Rated ${poi.rating} stars with ${poi.reviewsCount} reviews.`,
+                rationale: `Added from nearby recommendations. Rated ${poi.rating} stars.`,
               };
 
-              dispatch({
-                type: 'ADD_STOP',
-                payload: {
-                  dayId: targetDayId,
-                  stop: newStop
-                }
-              });
-              
-              setNearbyPOIs([]);
+              dispatch({ type: 'ADD_STOP', payload: { dayId: targetDayId, stop: newStop } });
+              dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
               dispatch({ type: 'SELECT_STOP', payload: newStop.id });
             });
 
-            popupContent.querySelector('.close-btn').addEventListener('click', (ev) => {
-              ev.stopPropagation();
-              if (popupRef.current) {
-                popupRef.current.remove();
-                popupRef.current = null;
-              }
-            });
-
-            const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 15 })
+            if (popupRef.current) popupRef.current.remove();
+            const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, offset: 15 })
               .setLngLat([poi.lng, poi.lat])
               .setDOMContent(popupContent)
               .addTo(map);
-
             popupRef.current = popup;
           });
 
-          const marker = new maplibregl.Marker({ element: el })
+          const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
             .setLngLat([poi.lng, poi.lat])
             .addTo(map);
           markersRef.current.push(marker);
@@ -861,30 +799,44 @@ export default function MapPanel() {
       }
     };
 
-    if (map.loaded()) {
-      syncMapData();
+    // Use 'idle' event which fires after style is fully loaded and all rendering is done.
+    // This avoids the race condition where map.loaded() returns true but style isn't ready.
+    const runSync = () => {
+      try {
+        syncMapData();
+      } catch (e) {
+        console.warn('syncMapData failed, retrying on idle:', e);
+        map.once('idle', syncMapData);
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      runSync();
     } else {
-      map.on('load', syncMapData);
+      map.once('load', runSync);
     }
 
     const onMapClick = () => {
       dispatch({ type: 'SELECT_STOP', payload: null });
       dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
-      setNearbyPOIs([]);
+      dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
     };
     map.on('click', onMapClick);
 
     return () => {
       map.off('click', onMapClick);
+      map.off('load', runSync);
+      map.off('idle', syncMapData);
       markersRef.current.forEach(m => m.remove());
       markersRef.current = [];
       if (popupRef.current) popupRef.current.remove();
     };
   }, [
     state.trip, 
-    mapLayer, 
+    state.showHomestays,
+    highlightedDayId,
     routesData, 
-    nearbyPOIs, 
+    state.nearbyPOIs, 
     state.selectedHomestayId, 
     state.hoveredHomestayId, 
     state.activeStopId, 
@@ -896,10 +848,8 @@ export default function MapPanel() {
     dispatch
   ]);
 
-  // Helper declarations moved to top of component
-
   return (
-    <div className="flex-1 h-full relative bg-bg flex flex-col min-w-0">
+    <div className="flex-1 h-full relative flex flex-col min-w-0 map-crosshair" style={{ background: 'var(--bg)' }}>
       {/* Mapbox Live Container */}
       {!useMockMap && (
         <div ref={mapContainerRef} className="w-full h-full absolute inset-0 z-10" />
@@ -907,12 +857,12 @@ export default function MapPanel() {
 
       {/* SVG Interactive Mockup Map */}
       {useMockMap && (
-        <div className="w-full h-full absolute inset-0 bg-[#0b100e] flex items-center justify-center overflow-hidden z-10 select-none">
+        <div className="w-full h-full absolute inset-0 flex items-center justify-center overflow-hidden z-10 select-none" style={{ background: 'var(--bg)' }}>
           {/* Ambient gradient */}
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(45,212,191,0.03)_0%,transparent_60%)]" />
+          <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at center, var(--accent-dim) 0%, transparent 60%)' }} />
           
           {/* Subtle Grid overlay */}
-          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.012)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.012)_1px,transparent_1px)] bg-[size:30px_30px]" />
+          <div className="absolute inset-0" style={{ background: 'linear-gradient(rgba(128,128,128,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(128,128,128,0.02) 1px, transparent 1px)', backgroundSize: '30px 30px' }} />
 
           {/* SVG Elements */}
           <svg
@@ -920,11 +870,11 @@ export default function MapPanel() {
             className="w-full h-full max-w-5xl z-10 p-2"
             style={{ transition: 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)' }}
           >
-            {/* Tokyo Bay water */}
+            {/* Water features */}
             <defs>
               <linearGradient id="waterGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#0e2a2a" stopOpacity="0.4" />
-                <stop offset="100%" stopColor="#0b1a1a" stopOpacity="0.2" />
+                <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.06" />
+                <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.02" />
               </linearGradient>
             </defs>
 
@@ -937,183 +887,118 @@ export default function MapPanel() {
               strokeLinecap="round"
               className="opacity-50"
             />
-            <path
-              d="M 450 0 C 420 80, 390 120, 380 180 C 370 240, 390 320, 350 400"
-              fill="none"
-              stroke="#0b1a1a"
-              strokeWidth="38"
-              strokeLinecap="round"
-              className="opacity-60"
-            />
-
-            {/* Mock Tokyo Bay */}
-            <path
-              d="M 350 400 C 340 370, 380 340, 420 340 C 470 340, 480 360, 500 350 L 500 400 Z"
-              fill="url(#waterGrad)"
-              className="opacity-40"
-            />
 
             {/* ═══════════════════════════════════════════
-                STOPS LAYER — Day routes + Stop pins
+                STOPS LAYER — Day routes + Stop pins + Travel labels
                 ═══════════════════════════════════════════ */}
-            {mapLayer === 'stops' && (
-              <g className="fade-in">
-                {/* Day Route Polylines */}
-                {(() => {
-                  // Find which day the active stop belongs to
-                  let activeDayId = null;
-                  if (state.activeStopId) {
-                    for (const day of state.trip.days) {
-                      if (day.stops.some(s => s.id === state.activeStopId)) {
-                        activeDayId = day.id;
-                        break;
-                      }
-                    }
-                  }
-
-                  return state.trip.days.map((day) => {
-                    if (day.stops.length < 2) return null;
-                    const color = getDayColorHex(day.colorHue);
-                    const pathData = day.stops
-                      .map((stop, idx) => {
-                        const { x, y } = mapCoordsToSvg(stop.lat, stop.lng);
-                        return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
-                      })
-                      .join(' ');
-
-                    const isActiveDayRoute = !activeDayId || day.id === activeDayId;
-                    const mainOpacity = isActiveDayRoute ? 0.75 : 0.12;
-                    const glowOpacity = isActiveDayRoute ? 0.18 : 0.04;
-                    const dashOpacity = isActiveDayRoute ? 0.9 : 0;
-                    const strokeW = isActiveDayRoute ? 3 : 1.5;
-
-                    return (
-                      <g key={day.id} style={{ transition: 'opacity 0.4s ease' }}>
-                        {/* Glow path */}
-                        <path d={pathData} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" opacity={glowOpacity} />
-                        {/* Main path */}
-                        <path d={pathData} fill="none" stroke={color} strokeWidth={strokeW} strokeLinecap="round" strokeLinejoin="round" opacity={mainOpacity} />
-                        {/* Animated dash overlay — only shown for active day */}
-                        {isActiveDayRoute && (
-                          <path d={pathData} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8,6" opacity={dashOpacity} style={{ animation: 'dash 20s linear infinite' }} />
-                        )}
-                      </g>
-                    );
-                  });
-                })()}
-
-                {/* Stop Pins */}
-                {state.trip.days.map((day) => {
-                  const color = getDayColorHex(day.colorHue);
-                  return day.stops.map((stop) => {
+            {/* Stops Layer — always visible */}
+            <g className="fade-in">
+              {/* Day Route Polylines */}
+              {state.trip.days.map((day) => {
+                if (day.stops.length < 2) return null;
+                const color = getDayColorHex(day.colorHue);
+                const pathData = day.stops
+                  .map((stop, idx) => {
                     const { x, y } = mapCoordsToSvg(stop.lat, stop.lng);
-                    const isHovered = state.hoveredStopId === stop.id;
-                    const isActive = state.activeStopId === stop.id;
-                    const isPulsing = isHovered || isActive;
+                    return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
+                  })
+                  .join(' ');
 
-                    return (
-                      <g
-                        key={stop.id}
-                        className="cursor-pointer"
-                        transform={`translate(${x}, ${y})`}
-                        onClick={() => handleMapStopClick(stop.id)}
-                        onMouseEnter={() => handleMapStopHover(stop.id)}
-                        onMouseLeave={() => handleMapStopHover(null)}
+                const isActiveDayRoute = !highlightedDayId || day.id === highlightedDayId;
+                const mainOpacity = isActiveDayRoute ? 0.75 : 0.12;
+                const glowOpacity = isActiveDayRoute ? 0.18 : 0.04;
+                const dashOpacity = isActiveDayRoute ? 0.9 : 0;
+                const strokeW = isActiveDayRoute ? 3 : 1.5;
+
+                return (
+                  <g key={day.id} style={{ transition: 'opacity 0.4s ease' }}>
+                    {/* Glow path */}
+                    <path d={pathData} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" opacity={glowOpacity} />
+                    {/* Main path */}
+                    <path d={pathData} fill="none" stroke={color} strokeWidth={strokeW} strokeLinecap="round" strokeLinejoin="round" opacity={mainOpacity} />
+                    {/* Animated dash overlay */}
+                    {isActiveDayRoute && (
+                      <path d={pathData} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8,6" opacity={dashOpacity} style={{ animation: 'dash 20s linear infinite' }} />
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Travel-time labels between consecutive stops */}
+              {state.trip.days.map((day) => {
+                const isActive = !highlightedDayId || day.id === highlightedDayId;
+                if (!isActive || day.stops.length < 2) return null;
+
+                return day.stops.slice(0, -1).map((s1, i) => {
+                  const s2 = day.stops[i + 1];
+                  const p1 = mapCoordsToSvg(s1.lat, s1.lng);
+                  const p2 = mapCoordsToSvg(s2.lat, s2.lng);
+                  const midX = (p1.x + p2.x) / 2;
+                  const midY = (p1.y + p2.y) / 2;
+                  const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
+                  const label = getTravelLabel(dist);
+
+                  return (
+                    <foreignObject
+                      key={`label-${day.id}-${i}`}
+                      x={midX - 40}
+                      y={midY - 10}
+                      width="80"
+                      height="20"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      <div
+                        xmlns="http://www.w3.org/1999/xhtml"
+                        className="route-time-label"
+                        style={{ textAlign: 'center', fontSize: '9px' }}
                       >
-                        {isPulsing && <circle r="14" fill={color} opacity="0.15" className="animate-ping" />}
-                        <circle r={isPulsing ? '9' : '7'} fill={color} opacity={isPulsing ? 0.35 : 0.2} style={{ transition: 'all 0.3s ease' }} />
-                        <circle r={isPulsing ? '6.5' : '5.5'} fill={color} style={{ transition: 'all 0.3s ease' }} />
-                        <circle r={isPulsing ? '4.5' : '3.5'} fill="#0e1513" style={{ transition: 'all 0.3s ease' }} />
-                        <text y="2.5" textAnchor="middle" fill={color} fontSize={isPulsing ? '7' : '6'} fontWeight="bold" fontFamily="JetBrains Mono, monospace" style={{ transition: 'all 0.3s ease' }}>
-                          {stop.order}
-                        </text>
-                        <title>{stop.name}</title>
-                      </g>
-                    );
-                  });
-                })}
-              </g>
-            )}
-
-            {/* ═══════════════════════════════════════════
-                HOMESTAYS LAYER — Homestay pins + commute lines + radius rings
-                ═══════════════════════════════════════════ */}
-            {mapLayer === 'homestays' && (
-              <g className="fade-in">
-                {/* Ghost day routes (dimmed, for spatial context) */}
-                {state.trip.days.map((day) => {
-                  if (day.stops.length < 2) return null;
-                  const color = getDayColorHex(day.colorHue);
-                  const pathData = day.stops
-                    .map((stop, idx) => {
-                      const { x, y } = mapCoordsToSvg(stop.lat, stop.lng);
-                      return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
-                    })
-                    .join(' ');
-                  return (
-                    <path key={day.id} d={pathData} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.12" strokeDasharray="4,6" />
+                        {label}
+                      </div>
+                    </foreignObject>
                   );
-                })}
+                });
+              })}
 
-                {/* Ghost stop pins (dimmed) */}
-                {state.trip.days.map((day) => {
-                  const color = getDayColorHex(day.colorHue);
-                  return day.stops.map((stop) => {
-                    const { x, y } = mapCoordsToSvg(stop.lat, stop.lng);
-                    return (
-                      <g key={stop.id} transform={`translate(${x}, ${y})`}>
-                        <circle r="4" fill={color} opacity="0.12" />
-                        <circle r="2.5" fill={color} opacity="0.2" />
-                      </g>
-                    );
-                  });
-                })}
+              {/* Stop Pins */}
+              {state.trip.days.map((day) => {
+                const color = getDayColorHex(day.colorHue);
+                const isActiveDayPins = !highlightedDayId || day.id === highlightedDayId;
 
-                {/* Day Center-of-Gravity markers */}
-                {state.trip.days.map((day) => {
-                  const cog = getDayCog(day.id);
-                  if (!cog) return null;
-                  const color = getDayColorHex(day.colorHue);
+                return day.stops.map((stop) => {
+                  const { x, y } = mapCoordsToSvg(stop.lat, stop.lng);
+                  const isHovered = state.hoveredStopId === stop.id;
+                  const isActive = state.activeStopId === stop.id;
+                  const isPulsing = isHovered || isActive;
+                  const pinOpacity = isActiveDayPins ? 1 : 0.2;
+
                   return (
-                    <g key={`cog-${day.id}`}>
-                      <circle cx={cog.x} cy={cog.y} r="18" fill="none" stroke={color} strokeWidth="0.8" strokeDasharray="3,3" opacity="0.2" />
-                      <circle cx={cog.x} cy={cog.y} r="3" fill={color} opacity="0.25" />
-                      <text x={cog.x} y={cog.y - 22} textAnchor="middle" fill={color} fontSize="5" fontWeight="bold" fontFamily="JetBrains Mono, monospace" opacity="0.4">
-                        D{day.dayNumber} CENTER
+                    <g
+                      key={stop.id}
+                      className="cursor-pointer"
+                      transform={`translate(${x}, ${y})`}
+                      onClick={() => handleMapStopClick(stop.id)}
+                      onMouseEnter={() => handleMapStopHover(stop.id)}
+                      onMouseLeave={() => handleMapStopHover(null)}
+                      opacity={pinOpacity}
+                      style={{ transition: 'opacity 0.3s ease' }}
+                    >
+                      {isPulsing && <circle r="14" fill={color} opacity="0.15" className="animate-ping" />}
+                      <circle r={isPulsing ? '9' : '7'} fill={color} opacity={isPulsing ? 0.35 : 0.2} style={{ transition: 'all 0.3s ease' }} />
+                      <circle r={isPulsing ? '6.5' : '5.5'} fill={color} style={{ transition: 'all 0.3s ease' }} />
+                      <circle r={isPulsing ? '4.5' : '3.5'} fill="var(--bg, #0a0c10)" style={{ transition: 'all 0.3s ease' }} />
+                      <text y="2.5" textAnchor="middle" fill={color} fontSize={isPulsing ? '7' : '6'} fontWeight="bold" fontFamily="JetBrains Mono, monospace" style={{ transition: 'all 0.3s ease' }}>
+                        {stop.order}
                       </text>
+                      <title>{stop.name}</title>
                     </g>
                   );
-                })}
+                });
+              })}
+            </g>
 
-                {/* Commute Lines from active homestay to day COGs */}
-                {activeHomestayOnMap && state.trip.days.map((day) => {
-                  const cog = getDayCog(day.id);
-                  if (!cog) return null;
-                  const homePos = mapCoordsToSvg(activeHomestayOnMap.lat, activeHomestayOnMap.lng);
-                  const color = getDayColorHex(day.colorHue);
-
-                  return (
-                    <g key={`commute-h-${day.id}`} className="fade-in">
-                      <line x1={homePos.x} y1={homePos.y} x2={cog.x} y2={cog.y} stroke={color} strokeWidth="1.5" strokeDasharray="4,4" opacity="0.45" style={{ animation: 'dash 3s linear infinite' }} />
-                    </g>
-                  );
-                })}
-
-                {/* Also show commute lines when hovered from itinerary panel */}
-                {activeHomestay && !activeHomestayOnMap && state.trip.days.map((day) => {
-                  const cog = getDayCog(day.id);
-                  if (!cog) return null;
-                  const homePos = mapCoordsToSvg(activeHomestay.lat, activeHomestay.lng);
-
-                  return (
-                    <g key={`commute-it-${day.id}`} className="fade-in">
-                      <line x1={homePos.x} y1={homePos.y} x2={cog.x} y2={cog.y} stroke="#2dd4bf" strokeWidth="1.5" strokeDasharray="4,4" opacity="0.5" style={{ animation: 'dash 3s linear infinite' }} />
-                      <circle cx={cog.x} cy={cog.y} r="3" fill="none" stroke="#2dd4bf" strokeWidth="1" opacity="0.3" />
-                    </g>
-                  );
-                })}
-
-                {/* Homestay Pins (prominently displayed) */}
+            {/* Homestays Overlay — visible if state.showHomestays is true */}
+            {state.showHomestays && (
+              <g className="fade-in">
                 {state.homestays.map((home) => {
                   const { x, y } = mapCoordsToSvg(home.lat, home.lng);
                   const isSelected = state.selectedHomestayId === home.id;
@@ -1130,103 +1015,39 @@ export default function MapPanel() {
                       onMouseEnter={() => dispatch({ type: 'HOVER_HOMESTAY', payload: home.id })}
                       onMouseLeave={() => dispatch({ type: 'HOVER_HOMESTAY', payload: null })}
                     >
-                      {/* Proximity ring */}
-                      <circle r="28" fill="none" stroke="#2dd4bf" strokeWidth="0.5" strokeDasharray="2,3" opacity={isHighlighted ? 0.3 : 0.1} style={{ transition: 'all 0.3s ease' }} />
-
-                      {/* Pulse glow */}
+                      <circle r="28" fill="none" stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,3" opacity={isHighlighted ? 0.3 : 0.1} style={{ transition: 'all 0.3s ease' }} />
                       {isHighlighted && (
-                        <circle r="20" fill="#2dd4bf" opacity="0.08" className="animate-pulse" />
+                        <circle r="20" fill="var(--accent)" opacity="0.08" className="animate-pulse" />
                       )}
-
-                      {/* Outer circle */}
                       <circle
                         r={isHighlighted ? 14 : 10}
-                        fill={isActiveOnMap ? 'rgba(45,212,191,0.2)' : isSelected ? 'rgba(45,212,191,0.15)' : 'rgba(22,29,27,0.7)'}
-                        stroke={isHighlighted ? '#2dd4bf' : 'rgba(255,255,255,0.1)'}
+                        fill={isActiveOnMap ? 'var(--accent-dim)' : isSelected ? 'var(--accent-dim)' : 'var(--surface)'}
+                        stroke={isHighlighted ? 'var(--accent)' : 'var(--border)'}
                         strokeWidth={isHighlighted ? 1.5 : 0.8}
                         style={{ transition: 'all 0.3s ease' }}
                       />
-
-                      {/* House shape */}
                       <path
                         d="M-6 3 L-6 -1 L0 -7 L6 -1 L6 3 Z"
-                        fill={isHighlighted ? '#2dd4bf' : '#9aa3b2'}
+                        fill={isHighlighted ? 'var(--accent)' : 'var(--muted)'}
                         opacity={isHighlighted ? 1 : 0.5}
                         style={{ transition: 'all 0.3s ease' }}
                       />
-                      {/* Door */}
-                      <rect x="-1.5" y="-1" width="3" height="4" fill={isHighlighted ? '#0e1513' : '#0b1a1a'} opacity="0.6" rx="0.5" />
-
-                      {/* Rating badge */}
+                      <rect x="-1.5" y="-1" width="3" height="4" fill="var(--bg)" opacity="0.6" rx="0.5" />
                       <g transform="translate(10, -10)">
-                        <rect x="-8" y="-5" width="16" height="10" rx="4" fill="rgba(22,29,27,0.85)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-                        <text textAnchor="middle" y="2" fill="#fbbf24" fontSize="5" fontWeight="bold" fontFamily="JetBrains Mono, monospace">
+                        <rect x="-8" y="-5" width="16" height="10" rx="4" fill="var(--surface)" stroke="var(--border)" strokeWidth="0.5" />
+                        <text textAnchor="middle" y="2" fill="var(--warm)" fontSize="5" fontWeight="bold" fontFamily="JetBrains Mono, monospace">
                           ★{home.rating}
                         </text>
                       </g>
-
-                      {/* Name label (visible when highlighted) */}
                       {isHighlighted && (
                         <g transform="translate(0, 20)">
-                          <rect x="-35" y="-6" width="70" height="12" rx="4" fill="rgba(22,29,27,0.9)" stroke="rgba(45,212,191,0.2)" strokeWidth="0.5" />
-                          <text textAnchor="middle" y="2" fill="#e7e9ee" fontSize="4.5" fontWeight="600" fontFamily="Sora, sans-serif">
+                          <rect x="-35" y="-6" width="70" height="12" rx="4" fill="var(--surface)" stroke="var(--accent-border)" strokeWidth="0.5" />
+                          <text textAnchor="middle" y="2" fill="var(--text)" fontSize="4.5" fontWeight="600" fontFamily="Sora, sans-serif">
                             {home.name}
                           </text>
                         </g>
                       )}
-
                       <title>{home.name} — ★{home.rating} — ¥{home.pricePerNight.toLocaleString()}/night</title>
-                    </g>
-                  );
-                })}
-              </g>
-            )}
-
-            {/* ═══════════════════════════════════════════
-                STOPS LAYER — Homestay pins (ghost, for reference)
-                ═══════════════════════════════════════════ */}
-            {mapLayer === 'stops' && (
-              <g>
-                {/* Commute Lines from itinerary panel homestay hover */}
-                {activeHomestay && state.trip.days.map((day) => {
-                  const cog = getDayCog(day.id);
-                  if (!cog) return null;
-                  const homePos = mapCoordsToSvg(activeHomestay.lat, activeHomestay.lng);
-
-                  return (
-                    <g key={`commute-${day.id}`} className="fade-in">
-                      <line x1={homePos.x} y1={homePos.y} x2={cog.x} y2={cog.y} stroke="#2dd4bf" strokeWidth="1.5" strokeDasharray="4,4" opacity="0.5" style={{ animation: 'dash 3s linear infinite' }} />
-                      <circle cx={cog.x} cy={cog.y} r="3" fill="none" stroke="#2dd4bf" strokeWidth="1" opacity="0.3" />
-                    </g>
-                  );
-                })}
-
-                {/* Small homestay pins in stops view */}
-                {state.homestays.map((home) => {
-                  const { x, y } = mapCoordsToSvg(home.lat, home.lng);
-                  const isSelected = state.selectedHomestayId === home.id;
-                  const isHovered = state.hoveredHomestayId === home.id;
-                  const isHighlighted = isSelected || isHovered;
-
-                  return (
-                    <g key={home.id} className="cursor-pointer" transform={`translate(${x}, ${y})`}>
-                      {isHighlighted && (
-                        <circle r="16" fill="#2dd4bf" opacity="0.1" className="animate-pulse" />
-                      )}
-                      <circle
-                        r={isHighlighted ? 12 : 8}
-                        fill={isSelected ? 'rgba(45,212,191,0.15)' : 'rgba(30,41,59,0.4)'}
-                        stroke={isHighlighted ? '#2dd4bf' : '#1e293b'}
-                        strokeWidth="1"
-                        style={{ transition: 'all 0.3s ease' }}
-                      />
-                      <path
-                        d="M-5 2 L-5 -2 L0 -6 L5 -2 L5 2 Z"
-                        fill={isHighlighted ? '#2dd4bf' : '#9aa3b2'}
-                        opacity={isHighlighted ? 1 : 0.6}
-                        style={{ transition: 'all 0.3s ease' }}
-                      />
-                      <title>{home.name}</title>
                     </g>
                   );
                 })}
@@ -1234,13 +1055,13 @@ export default function MapPanel() {
             )}
           </svg>
 
-          {/* ─── Stop Popover (Glassmorphic) ─── */}
-          {activeStop && mapLayer === 'stops' && useMockMap && (() => {
+          {/* ─── Stop Popover (SVG mode) ─── */}
+          {activeStop && useMockMap && (() => {
             const { x, y } = mapCoordsToSvg(activeStop.lat, activeStop.lng);
             const color = getDayColorHex(activeStop.dayColorHue);
             const pctX = ((x - viewBox.x) / viewBox.w) * 100;
             const pctY = ((y - viewBox.y) / viewBox.h) * 100;
-
+ 
             return (
               <div
                 className="absolute z-30 scale-in pointer-events-auto"
@@ -1250,43 +1071,40 @@ export default function MapPanel() {
                   transform: 'translate(-50%, -100%)',
                 }}
               >
-                <div className="glass-panel rounded-2xl p-3.5 min-w-[200px] max-w-[260px] shadow-2xl border border-white/[0.1]">
-                  <div
-                    className="h-16 rounded-xl mb-2.5 flex items-end p-2"
-                    style={{ background: `linear-gradient(135deg, ${color}30, ${color}10, rgba(14,21,19,0.8))` }}
-                  >
-                    <span className="text-[8px] font-mono uppercase tracking-widest" style={{ color }}>
-                      Day {activeStop.dayColorHue}
-                    </span>
+                <div className="rounded-xl overflow-hidden shadow-2xl min-w-[200px] max-w-[260px]" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  {/* Accent bar */}
+                  <div style={{ height: '3px', background: color }} />
+                  <div className="p-3.5">
+                    <h4 className="font-bold text-xs mb-1" style={{ color: 'var(--text)' }}>{activeStop.name}</h4>
+                    <div className="flex items-center gap-2 text-[9px] font-mono mb-2" style={{ color: 'var(--muted)' }}>
+                      <span>{activeStop.timeEstimate}</span>
+                      <span>·</span>
+                      <span style={{ color }}>
+                        {activeStop.costEstimate === 0 ? 'Free' : `¥${activeStop.costEstimate.toLocaleString()}`}
+                      </span>
+                    </div>
+                    <div className="rounded-lg p-2" style={{ background: 'var(--surface-2)', borderTop: '1px solid var(--border)' }}>
+                      <span className="text-[7px] font-bold uppercase tracking-widest block mb-0.5" style={{ color: 'var(--accent)' }}>Why this?</span>
+                      <p className="text-[9px] leading-relaxed" style={{ color: 'var(--muted)' }}>{activeStop.rationale}</p>
+                    </div>
+                    <button
+                      onClick={() => dispatch({ type: 'SELECT_STOP', payload: null })}
+                      className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer"
+                      style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted)' }}
+                    >
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
-                  <h4 className="font-bold text-xs text-white mb-0.5">{activeStop.name}</h4>
-                  <div className="flex items-center gap-2 text-[9px] font-mono text-muted mb-2">
-                    <span>{activeStop.timeEstimate}</span>
-                    <span>·</span>
-                    <span style={{ color }}>
-                      {activeStop.costEstimate === 0 ? 'Free' : `¥${activeStop.costEstimate.toLocaleString()}`}
-                    </span>
-                  </div>
-                  <div className="bg-accent/5 border border-accent/10 rounded-lg p-2">
-                    <span className="text-[7px] text-accent font-bold uppercase tracking-widest block mb-0.5">Why this?</span>
-                    <p className="text-[9px] text-accent/70 leading-relaxed">{activeStop.rationale}</p>
-                  </div>
-                  <button
-                    onClick={() => dispatch({ type: 'SELECT_STOP', payload: null })}
-                    className="absolute top-2 right-2 w-5 h-5 rounded-full bg-white/[0.05] border border-white/[0.1] flex items-center justify-center text-muted hover:text-white transition-colors cursor-pointer"
-                  >
-                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
                 </div>
-                <div className="w-3 h-3 rotate-45 mx-auto -mt-1.5" style={{ background: 'rgba(22, 29, 27, 0.7)', borderRight: '1px solid rgba(255,255,255,0.08)', borderBottom: '1px solid rgba(255,255,255,0.08)' }} />
+                <div className="w-3 h-3 rotate-45 mx-auto -mt-1.5" style={{ background: 'var(--surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
               </div>
             );
           })()}
-
-          {/* ─── Homestay Popover (Glassmorphic) ─── */}
-          {activeHomestayOnMap && mapLayer === 'homestays' && useMockMap && (() => {
+ 
+          {/* ─── Homestay Popover (SVG mode) ─── */}
+          {activeHomestayOnMap && state.showHomestays && useMockMap && (() => {
             const home = activeHomestayOnMap;
             const { x, y } = mapCoordsToSvg(home.lat, home.lng);
             const pctX = ((x - viewBox.x) / viewBox.w) * 100;
@@ -1302,193 +1120,177 @@ export default function MapPanel() {
                   transform: 'translate(-50%, -100%)',
                 }}
               >
-                <div className="glass-panel rounded-2xl p-3.5 min-w-[220px] max-w-[280px] shadow-2xl border border-white/[0.1]">
-                  {/* Gradient header with house icon */}
-                  <div className="h-14 rounded-xl mb-2.5 flex items-center justify-center bg-gradient-to-br from-accent/20 via-accent/5 to-transparent">
-                    <span className="text-2xl">🏠</span>
-                  </div>
-
-                  {/* Name & Rating */}
-                  <div className="flex items-start justify-between mb-1.5">
-                    <h4 className="font-bold text-xs text-white">{home.name}</h4>
-                    <div className="flex items-center gap-0.5 text-[9px] font-mono text-amber-400 shrink-0 ml-2">
-                      <span>★</span>
-                      <span>{home.rating}</span>
-                      <span className="text-muted">({home.reviewCount})</span>
+                <div className="rounded-xl overflow-hidden shadow-2xl min-w-[220px] max-w-[280px]" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <div style={{ height: '3px', background: 'var(--warm)' }} />
+                  <div className="p-3.5">
+                    <div className="flex items-start justify-between mb-1.5">
+                      <h4 className="font-bold text-xs" style={{ color: 'var(--text)' }}>{home.name}</h4>
+                      <div className="flex items-center gap-0.5 text-[9px] font-mono shrink-0 ml-2" style={{ color: 'var(--warm)' }}>
+                        <span>★</span>
+                        <span>{home.rating}</span>
+                        <span style={{ color: 'var(--muted)' }}>({home.reviewCount})</span>
+                      </div>
                     </div>
-                  </div>
-
-                  {/* Price & Commute */}
-                  <div className="flex items-center gap-3 mb-2.5">
-                    <span className="font-mono text-sm font-bold text-white">
-                      ¥{home.pricePerNight.toLocaleString()}
-                      <span className="text-[8px] text-muted font-normal"> /night</span>
-                    </span>
-                    <span className="text-[9px] text-accent font-mono flex items-center gap-0.5">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                      </svg>
-                      {home.avgCommuteMinutes}min avg
-                    </span>
-                  </div>
-
-                  {/* Amenities */}
-                  <div className="flex flex-wrap gap-1 mb-2.5">
-                    {home.amenities.slice(0, 4).map((amenity, idx) => (
-                      <span key={idx} className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.05] text-[7px] text-muted font-mono">
-                        {amenity}
+                    <div className="flex items-center gap-3 mb-2.5">
+                      <span className="font-mono text-sm font-bold" style={{ color: 'var(--text)' }}>
+                        ¥{home.pricePerNight.toLocaleString()}
+                        <span className="text-[8px] font-normal" style={{ color: 'var(--muted)' }}> /night</span>
                       </span>
-                    ))}
+                      <span className="text-[9px] font-mono flex items-center gap-0.5" style={{ color: 'var(--accent)' }}>
+                        {home.avgCommuteMinutes}min avg
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mb-2.5">
+                      {home.amenities.slice(0, 4).map((amenity, idx) => (
+                        <span key={idx} className="px-1.5 py-0.5 rounded text-[7px] font-mono" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
+                          {amenity}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="rounded-lg p-2 mb-2.5" style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)' }}>
+                      <span className="text-[7px] font-bold uppercase tracking-widest block mb-0.5" style={{ color: 'var(--accent)' }}>Route Fit</span>
+                      <p className="text-[8px] leading-relaxed" style={{ color: 'var(--muted)' }}>{home.rationale}</p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        dispatch({ type: 'SELECT_HOMESTAY', payload: isSelected ? null : home.id });
+                      }}
+                      className="w-full py-2 rounded-lg text-[10px] font-bold cursor-pointer"
+                      style={{
+                        background: isSelected ? 'var(--accent)' : 'var(--surface-2)',
+                        color: isSelected ? 'var(--bg)' : 'var(--text)',
+                        border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                        transition: 'all 0.3s ease',
+                      }}
+                    >
+                      {isSelected ? '✓ Selected as Lodging' : 'Choose This Homestay'}
+                    </button>
+                    <button
+                      onClick={() => dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null })}
+                      className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer"
+                      style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted)' }}
+                    >
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
-
-                  {/* AI Rationale */}
-                  <div className="bg-accent/5 border border-accent/10 rounded-lg p-2 mb-2.5">
-                    <span className="text-[7px] text-accent font-bold uppercase tracking-widest block mb-0.5">Route Fit</span>
-                    <p className="text-[8px] text-accent/70 leading-relaxed">{home.rationale}</p>
-                  </div>
-
-                  {/* Select button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      dispatch({ type: 'SELECT_HOMESTAY', payload: isSelected ? null : home.id });
-                    }}
-                    className={`w-full py-2 rounded-lg text-[10px] font-bold transition-all transform active:scale-95 cursor-pointer ${
-                      isSelected
-                        ? 'bg-accent text-bg hover:bg-accent/80'
-                        : 'bg-white/[0.05] text-white hover:bg-white/[0.1] border border-white/[0.08]'
-                    }`}
-                  >
-                    {isSelected ? '✓ Selected as Lodging' : 'Choose This Homestay'}
-                  </button>
-
-                  {/* Close */}
-                  <button
-                    onClick={() => dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null })}
-                    className="absolute top-2 right-2 w-5 h-5 rounded-full bg-white/[0.05] border border-white/[0.1] flex items-center justify-center text-muted hover:text-white transition-colors cursor-pointer"
-                  >
-                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
                 </div>
-                {/* Arrow */}
-                <div className="w-3 h-3 rotate-45 mx-auto -mt-1.5" style={{ background: 'rgba(22, 29, 27, 0.7)', borderRight: '1px solid rgba(255,255,255,0.08)', borderBottom: '1px solid rgba(255,255,255,0.08)' }} />
+                <div className="w-3 h-3 rotate-45 mx-auto -mt-1.5" style={{ background: 'var(--surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
               </div>
             );
           })()}
 
           {/* Map Status Overlay */}
-          <div className="absolute bottom-4 left-4 right-4 p-3 rounded-xl glass-panel text-center max-w-sm mx-auto z-20 border border-white/[0.08]">
-            <h4 className="font-bold text-[10px] text-white mb-0.5 flex items-center justify-center gap-1.5 font-sans">
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 p-3 rounded-xl text-center max-w-sm z-20" style={{ background: 'var(--panel)', backdropFilter: 'blur(20px)', border: '1px solid var(--border)' }}>
+            <h4 className="font-bold text-[10px] mb-0.5 flex items-center justify-center gap-1.5 font-sans" style={{ color: 'var(--text)' }}>
               <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: 'var(--accent)' }}></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ background: 'var(--accent)' }}></span>
               </span>
-              OpenFreeMap Live Vector Tiles
+              Interactive Map Canvas
             </h4>
-            <p className="text-[9px] text-muted leading-relaxed font-sans">
-              Connected. Displaying street-level travel coordinates and routing.
+            <p className="text-[9px] leading-relaxed font-sans" style={{ color: 'var(--muted)' }}>
+              Displaying travel coordinates and routing.
             </p>
           </div>
         </div>
       )}
 
       {/* ═══════════════════════════════════════════
-          MAP HUD — Tab Switcher (Stops / Homestays)
+          DAY LEGEND — Bottom-left (always visible if days present)
           ═══════════════════════════════════════════ */}
-      <div className="absolute top-3 left-3 z-20 glass-panel rounded-xl p-2 shadow-xl border border-white/[0.06]">
-        {/* Tab Bar */}
-        <div className="flex gap-1 mb-1.5">
-          <button
-            onClick={() => dispatch({ type: 'SET_MAP_LAYER', payload: 'stops' })}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all-300 cursor-pointer ${
-              mapLayer === 'stops'
-                ? 'bg-accent/15 border border-accent/25 text-accent shadow-sm'
-                : 'bg-white/[0.02] border border-transparent text-muted hover:text-white hover:bg-white/[0.05]'
-            }`}
-          >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            Stops
-          </button>
-          <button
-            onClick={() => dispatch({ type: 'SET_MAP_LAYER', payload: 'homestays' })}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all-300 cursor-pointer ${
-              mapLayer === 'homestays'
-                ? 'bg-accent/15 border border-accent/25 text-accent shadow-sm'
-                : 'bg-white/[0.02] border border-transparent text-muted hover:text-white hover:bg-white/[0.05]'
-            }`}
-          >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
-            Homestays
-            <span className="px-1 py-0.5 rounded bg-white/[0.06] text-[7px] font-mono text-muted">
-              {state.homestays.length}
-            </span>
-          </button>
+      {state.trip.days.length > 0 && (
+        <div className="map-legend">
+          {state.trip.days.map((day) => {
+            const color = getDayColorHex(day.colorHue);
+            const isDimmed = highlightedDayId !== null && day.id !== highlightedDayId;
+            return (
+              <div
+                key={day.id}
+                className={`legend-item ${isDimmed ? 'dimmed' : ''}`}
+                onClick={() => handleLegendClick(day.id)}
+                tabIndex={0}
+                role="button"
+                aria-label={`Day ${day.dayNumber}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleLegendClick(day.id); }
+                }}
+              >
+                <div className="legend-dot" style={{ background: color }} />
+                <span style={{ color: 'var(--text)' }}>Day {day.dayNumber}</span>
+              </div>
+            );
+          })}
         </div>
-
-        {/* Day chips (visible in stops mode) */}
-        {mapLayer === 'stops' && (
-          <div className="flex gap-1 fade-in">
-            {state.trip.days.map((day) => {
-              const color = getDayColorHex(day.colorHue);
-              return (
-                <span
-                  key={day.id}
-                  className="px-1.5 py-0.5 rounded text-[7px] font-bold font-mono border cursor-pointer transition-all-300"
-                  style={{
-                    backgroundColor: `${color}15`,
-                    borderColor: `${color}30`,
-                    color: color,
-                  }}
-                >
-                  D{day.dayNumber}
-                </span>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Homestay summary (visible in homestays mode) */}
-        {mapLayer === 'homestays' && (
-          <div className="flex items-center gap-2 text-[8px] text-muted font-mono fade-in px-0.5">
-            <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent"></span>
-              {state.selectedHomestayId ? 'Selected' : 'Click to explore'}
-            </span>
-            {state.selectedHomestayId && (
-              <span className="text-accent font-semibold">
-                {state.homestays.find(h => h.id === state.selectedHomestayId)?.name}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
+      )}
       
-      {/* Map controls bottom right */}
-      <div className="absolute bottom-4 right-4 z-20 flex flex-col gap-1.5">
+      {/* ═══════════════════════════════════════════
+          MAP CONTROLS — Right side column
+          ═══════════════════════════════════════════ */}
+      <div className="absolute top-4 right-4 z-20 flex flex-col gap-1.5">
+        {/* Toggle AI chat */}
         <button
-          onClick={handleZoomIn}
-          className="w-8 h-8 rounded-lg glass-panel flex items-center justify-center border border-white/[0.08] hover:bg-white/[0.08] text-white font-mono text-xs shadow-lg transition-all-300 cursor-pointer"
+          onClick={handleToggleChat}
+          className={`map-ctrl ${state.showChat ? 'active' : ''}`}
+          aria-label="Toggle AI chat"
         >
-          +
+          <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
+            <path
+              d="M3 4h12a1 1 0 011 1v7a1 1 0 01-1 1H6l-3 3V5a1 1 0 011-1z"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
+
+        {/* Toggle Homestays */}
         <button
-          onClick={handleZoomOut}
-          className="w-8 h-8 rounded-lg glass-panel flex items-center justify-center border border-white/[0.08] hover:bg-white/[0.08] text-white font-mono text-xs shadow-lg transition-all-300 cursor-pointer"
+          onClick={handleToggleHomestays}
+          className={`map-ctrl ${state.showHomestays ? 'active' : ''}`}
+          aria-label="Toggle homestays"
         >
-          −
+          <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
+            <path
+              d="M3 9.5L9 4l6 5.5V15a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M7 16v-5h4v5"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
-        <button
-          onClick={handleFitTrip}
-          className="px-2 py-1.5 rounded-lg glass-panel flex items-center justify-center border border-white/[0.08] hover:bg-white/[0.08] text-[9px] text-white font-semibold shadow-lg transition-all-300 cursor-pointer"
-        >
-          Fit
+
+        {/* Zoom In */}
+        <button onClick={handleZoomIn} className="map-ctrl" aria-label="Zoom in">
+          <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
+            <path d="M9 4v10M4 9h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+
+        {/* Zoom Out */}
+        <button onClick={handleZoomOut} className="map-ctrl" aria-label="Zoom out">
+          <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
+            <path d="M4 9h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+
+        {/* Fit Trip bounds */}
+        <button onClick={handleFitTrip} className="map-ctrl" aria-label="Fit trip bounds">
+          <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
+            <rect x="3" y="3" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M3 7h12M7 3v12" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+          </svg>
         </button>
       </div>
     </div>

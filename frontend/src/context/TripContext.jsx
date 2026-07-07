@@ -16,6 +16,11 @@ const initialState = {
   hasTrip: true, // false = show Empty State
   mapLayer: 'stops', // 'stops' | 'homestays'
   activeHomestayOnMapId: null, // for homestay popover on map
+  highlightedDayId: null, // for legend-based day filtering
+  showChat: false, // toggled via map control on desktop
+  showHomestays: true, // toggled via map control
+  nearbyPOIs: [], // nearby cafes, restaurants, shops for active stop
+  loadingPOIs: false, // loading state for nearby POIs
 };
 
 function tripReducer(state, action) {
@@ -94,6 +99,12 @@ function tripReducer(state, action) {
     case 'SET_HOMESTAYS':
       return { ...state, homestays: action.payload };
       
+    case 'SET_NEARBY_POIS':
+      return { ...state, nearbyPOIs: action.payload };
+      
+    case 'SET_LOADING_POIS':
+      return { ...state, loadingPOIs: action.payload };
+      
     case 'SET_ACTIVE_TAB':
       return { ...state, activeTab: action.payload };
       
@@ -167,6 +178,30 @@ function tripReducer(state, action) {
       };
     }
       
+    case 'HIGHLIGHT_DAY':
+      return {
+        ...state,
+        highlightedDayId: state.highlightedDayId === action.payload ? null : action.payload,
+      };
+
+    case 'TOGGLE_CHAT':
+      return {
+        ...state,
+        showChat: !state.showChat,
+      };
+
+    case 'TOGGLE_HOMESTAYS':
+      return {
+        ...state,
+        showHomestays: !state.showHomestays,
+      };
+
+    case 'SET_SHOW_CHAT':
+      return {
+        ...state,
+        showChat: action.payload,
+      };
+
     default:
       return state;
   }
