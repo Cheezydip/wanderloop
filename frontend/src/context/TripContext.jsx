@@ -1,6 +1,13 @@
 import { createContext, useContext, useReducer } from 'react';
 import { mockTrip, mockHomestays, mockKyotoTrip, mockOsakaTrip, mockHakoneTrip } from '../data/mockTrip';
 
+export const DEFAULT_BUDGET_ITEMS = [
+  { name: 'Accommodation (3 nights)', amount: 12000, color: '#2dd4bf' },
+  { name: 'Food & dining', amount: 6000, color: '#f59e0b' },
+  { name: 'Activity entries', amount: 3000, color: '#f43f5e' },
+  { name: 'Local transport', amount: 2000, color: '#84cc16' }
+];
+
 const initialState = {
   trip: mockTrip,
   homestays: mockHomestays,
@@ -22,6 +29,7 @@ const initialState = {
   nearbyPOIs: [], // nearby cafes, restaurants, shops for active stop
   loadingPOIs: false, // loading state for nearby POIs
   routesData: {}, // OSRM route data mapped by dayId
+  budgetItems: DEFAULT_BUDGET_ITEMS,
 };
 
 function tripReducer(state, action) {
@@ -132,6 +140,9 @@ function tripReducer(state, action) {
         },
       };
 
+    case 'SET_BUDGET_ITEMS':
+      return { ...state, budgetItems: action.payload };
+
     // ─── New Interaction Actions ───
     case 'HOVER_STOP':
       return { ...state, hoveredStopId: action.payload };
@@ -184,6 +195,7 @@ function tripReducer(state, action) {
         isInterviewMode: false,
         mapLayer: 'stops',
         routesData: {},
+        budgetItems: [],
       };
 
     case 'LOAD_TRIP': {
@@ -205,6 +217,7 @@ function tripReducer(state, action) {
         isGenerating: false,
         isInterviewMode: false,
         routesData: {},
+        budgetItems: DEFAULT_BUDGET_ITEMS,
       };
     }
       

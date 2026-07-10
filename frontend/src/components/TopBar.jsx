@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTrip } from '../context/TripContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -9,32 +9,36 @@ export default function TopBar() {
   const [isEditingBudget, setIsEditingBudget] = useState(false);
   const [tempBudget, setTempBudget] = useState(state.trip.budget || 25000);
   const [saveText, setSaveText] = useState('Save');
+  const budgetRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (budgetRef.current && !budgetRef.current.contains(event.target)) {
+        setShowBudgetDropdown(false);
+      }
+    }
+    if (showBudgetDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showBudgetDropdown]);
 
   const numDays = state.trip.days.length;
 
-  // Calculate expenses
-  const selectedHomestay = state.homestays.find(h => h.id === state.selectedHomestayId);
-  const lodgingCost = selectedHomestay ? selectedHomestay.pricePerNight * numDays : 0;
-
-  const activitiesCost = state.trip.days.reduce((total, day) => {
-    return total + day.stops.reduce((dayTotal, stop) => dayTotal + stop.costEstimate, 0);
-  }, 0);
-
-  // Mock standard estimates for food and transit per day
-  const foodCost = 2000 * numDays;
-  const transitCost = 1000 * numDays;
-
-  const totalSpend = lodgingCost + activitiesCost + foodCost + transitCost;
+  // Calculate expenses dynamically from global budgetItems state
+  const totalSpend = (state.budgetItems || []).reduce((sum, item) => sum + item.amount, 0);
   const budgetLimit = state.trip.budget || 25000;
   const percentage = Math.min((totalSpend / budgetLimit) * 100, 100);
 
-  // Budget status color
+  // Budget status color thresholds (matches wanderloopmap.html exactly: >90% is danger, >70% is warm, else teal)
   let budgetColorClass = 'bg-accent';
   let budgetTextColorClass = 'text-accent';
-  if (totalSpend > budgetLimit) {
+  if (percentage > 90) {
     budgetColorClass = 'bg-rose-500';
     budgetTextColorClass = 'text-rose-500 font-bold';
-  } else if (totalSpend > budgetLimit * 0.85) {
+  } else if (percentage > 70) {
     budgetColorClass = 'bg-amber-500';
     budgetTextColorClass = 'text-amber-500';
   }
@@ -128,7 +132,7 @@ export default function TopBar() {
         {state.hasTrip && (
           <>
             {/* Budget Display */}
-            <div className="relative">
+            <div className="relative" ref={budgetRef}>
               <button
                 onClick={() => {
                   setShowBudgetDropdown(!showBudgetDropdown);
@@ -213,17 +217,12 @@ export default function TopBar() {
 
                   {/* Expense Breakdown List */}
                   <div className="space-y-2.5 font-mono text-[10px]">
-                    {[
-                      { label: 'Lodging', value: lodgingCost, color: 'bg-accent' },
-                      { label: 'Activities', value: activitiesCost, color: 'bg-amber-400' },
-                      { label: 'Food (Est.)', value: foodCost, color: 'bg-violet-400' },
-                      { label: 'Transit (Est.)', value: transitCost, color: 'bg-rose-400' },
-                    ].map(({ label, value, color }) => (
-                      <div key={label} className="flex justify-between items-center">
+                    {(state.budgetItems || []).map((item, idx) => (
+                      <div key={idx} className="flex justify-between items-center">
                         <span className="flex items-center gap-1.5" style={{ color: 'var(--muted)' }}>
-                          <span className={`w-2 h-2 rounded-sm ${color}`}></span> {label}
+                          <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: item.color }}></span> {item.name}
                         </span>
-                        <span style={{ color: 'var(--text)' }}>¥{value.toLocaleString()}</span>
+                        <span style={{ color: 'var(--text)' }}>¥{item.amount.toLocaleString()}</span>
                       </div>
                     ))}
                     <div className="h-[1px] my-1" style={{ background: 'var(--border, rgba(255,255,255,0.06))' }}></div>
