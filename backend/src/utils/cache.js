@@ -31,3 +31,5 @@ class Cache {
 export const routeCache = new Cache(3600); // 1 hour TTL
 export const geocodeCache = new Cache(86400); // 24 hours TTL
 export const poiCache = new Cache(3600); // 1 hour TTL
+export const tableCache = new Cache(3600); // 1 hour TTL
+export const optimizeCache = new Cache(3600); // 1 hour TTL

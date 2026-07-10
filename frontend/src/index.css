@@ -570,3 +570,39 @@ body,
   0% { transform: scale(0.8); opacity: 0.6; }
   100% { transform: scale(1.5); opacity: 0; }
 }
+
+/* High contrast popup styles for map readability */
+.popup-title {
+  color: var(--text);
+}
+.popup-meta {
+  color: var(--muted);
+}
+.popup-desc {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .popup-title {
+  color: #ffffff !important;
+}
+[data-theme="dark"] .popup-meta {
+  color: #94a3b8 !important;
+}
+[data-theme="dark"] .popup-desc {
+  color: #cbd5e1 !important;
+}
+[data-theme="dark"] .poi-close-btn,
+[data-theme="dark"] .popup-close-btn,
+[data-theme="dark"] .homestay-close-btn {
+  color: #94a3b8 !important;
+}
+[data-theme="dark"] .poi-close-btn:hover,
+[data-theme="dark"] .popup-close-btn:hover,
+[data-theme="dark"] .homestay-close-btn:hover {
+  color: #ffffff !important;
+}
+[data-theme="dark"] .route-time-label {
+  background: #12151c !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}

@@ -4,6 +4,7 @@ import { useTrip } from '../../context/TripContext';
 import { useTheme } from '../../context/ThemeContext';
 import { getDayColorHex } from '../../utils/colors';
 import { haversine, getTravelLabel } from '../../utils/haversine';
+import { fetchRoute } from '../../utils/routeService';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -20,8 +21,11 @@ export default function MapPanel() {
   const mapRef = useRef(null);
   const markersRef = useRef([]);
   const popupRef = useRef(null);
+  const syncMapDataRef = useRef(null);
+  const activePOIPopupRef = useRef(false);
 
-  const [routesData, setRoutesData] = useState({});
+  const [styleTrigger, setStyleTrigger] = useState(0);
+  const routesData = state.routesData;
   // Using state.nearbyPOIs from global context
 
   // SVG panning state
@@ -75,6 +79,26 @@ export default function MapPanel() {
 
   // Homestay selected on map (for popover)
   const activeHomestayOnMap = state.homestays.find(h => h.id === state.activeHomestayOnMapId);
+
+  // Compute which homestays should be visible based on the active day context
+  const visibleHomestays = useMemo(() => {
+    // Determine which day to filter by: explicit highlight takes priority,
+    // then fall back to the day of the currently selected stop
+    let filterDayId = highlightedDayId;
+    if (!filterDayId && state.activeStopId) {
+      const dayOfStop = state.trip.days.find(d => d.stops.some(s => s.id === state.activeStopId));
+      if (dayOfStop) filterDayId = dayOfStop.id;
+    }
+
+    if (!filterDayId) return []; // no day selected → hide all homestays
+
+    const day = state.trip.days.find(d => d.id === filterDayId);
+    if (!day || !day.stops || day.stops.length === 0) return state.homestays;
+
+    return state.homestays.filter(h =>
+      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 5)
+    );
+  }, [state.homestays, state.trip.days, highlightedDayId, state.activeStopId]);
 
   // Calculate dynamic bounds for SVG mockup
   const bounds = useMemo(() => {
@@ -162,9 +186,10 @@ export default function MapPanel() {
         setZoomLevel(1.6);
       }
     } else if (mapRef.current) {
+      const currentZoom = mapRef.current.getZoom();
       mapRef.current.easeTo({
         center: [activeStop.lng, activeStop.lat],
-        zoom: 14,
+        zoom: Math.max(currentZoom, 14),
         duration: 800
       });
     }
@@ -185,9 +210,10 @@ export default function MapPanel() {
       });
       setZoomLevel(2);
     } else if (mapRef.current) {
+      const currentZoom = mapRef.current.getZoom();
       mapRef.current.easeTo({
         center: [activeHomestayOnMap.lng, activeHomestayOnMap.lat],
-        zoom: 13,
+        zoom: Math.max(currentZoom, 13),
         duration: 800
       });
     }
@@ -294,42 +320,7 @@ export default function MapPanel() {
     dispatch({ type: 'HIGHLIGHT_DAY', payload: dayId });
   }, [dispatch]);
 
-  // Fetch routes from backend OpenRouteService Directions proxy
-  useEffect(() => {
-    if (useMockMap) return;
-    
-    const fetchRoutes = async () => {
-      const newRoutes = {};
-      for (const day of state.trip.days) {
-        if (day.stops.length < 2) continue;
-        
-        const coords = day.stops.map(s => [s.lng, s.lat]);
-        try {
-          const response = await fetch('/api/route', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              coordinates: coords,
-              profile: 'foot-walking'
-            })
-          });
-          if (response.ok) {
-            const data = await response.json();
-            newRoutes[day.id] = data;
-          }
-        } catch (error) {
-          console.error(`Failed to fetch route for day ${day.id}:`, error);
-        }
-      }
-      setRoutesData(newRoutes);
-    };
 
-    if (state.trip?.days) {
-      fetchRoutes();
-    }
-  }, [state.trip.days, useMockMap]);
 
   // Show Nearby Places helper (dispatches to global context)
   const handleShowNearbyPlaces = useCallback(async (stop) => {
@@ -341,9 +332,10 @@ export default function MapPanel() {
         dispatch({ type: 'SET_NEARBY_POIS', payload: pois });
         
         if (mapRef.current) {
+          const currentZoom = mapRef.current.getZoom();
           mapRef.current.easeTo({
             center: [stop.lng, stop.lat],
-            zoom: 15,
+            zoom: Math.max(currentZoom, 15),
             duration: 500
           });
         }
@@ -369,6 +361,36 @@ export default function MapPanel() {
     }
   }, [state.activeStopId, state.trip.days, handleShowNearbyPlaces, dispatch]);
 
+  // Fetch real routes from OSRM whenever stops or day configuration changes
+  useEffect(() => {
+    if (useMockMap || !state.trip?.days) return;
+
+    state.trip.days.forEach(async (day) => {
+      if (day.stops.length < 2) {
+        if (state.routesData[day.id]) {
+          dispatch({ type: 'SET_ROUTE_DATA', payload: { dayId: day.id, routeData: null } });
+        }
+        return;
+      }
+
+      const currentCoords = day.stops.map(s => [s.lng, s.lat]);
+      const existingRoute = state.routesData[day.id];
+      if (existingRoute && existingRoute.coordinatesKey === JSON.stringify(currentCoords)) {
+        return;
+      }
+
+      try {
+        const routeGeoJSON = await fetchRoute(currentCoords, 'foot-walking');
+        if (routeGeoJSON) {
+          routeGeoJSON.coordinatesKey = JSON.stringify(currentCoords);
+          dispatch({ type: 'SET_ROUTE_DATA', payload: { dayId: day.id, routeData: routeGeoJSON } });
+        }
+      } catch (err) {
+        console.error(`Failed to fetch route for day ${day.id}:`, err);
+      }
+    });
+  }, [state.trip?.days, useMockMap, dispatch]);
+
   // MapLibre Live initialization
   useEffect(() => {
     if (useMockMap || !mapContainerRef.current) return;
@@ -393,14 +415,38 @@ export default function MapPanel() {
         setMapError('Failed to load MapLibre style. Using local interactive canvas.');
       });
 
+      const onMapClick = () => {
+        dispatch({ type: 'SELECT_STOP', payload: null });
+        dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
+        dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
+      };
+      map.on('click', onMapClick);
+
+      const onMapIdle = () => {
+        if (syncMapDataRef.current) {
+          syncMapDataRef.current();
+        }
+      };
+      map.on('idle', onMapIdle);
+
+      const onMapLoad = () => {
+        if (syncMapDataRef.current) {
+          syncMapDataRef.current();
+        }
+      };
+      map.on('load', onMapLoad);
+
       return () => {
+        map.off('click', onMapClick);
+        map.off('idle', onMapIdle);
+        map.off('load', onMapLoad);
         map.remove();
       };
     } catch (err) {
       console.error('MapLibre init error:', err);
       setMapError(err instanceof Error ? err.message : 'MapLibre initialization failed');
     }
-  }, [useMockMap]);
+  }, [useMockMap, dispatch]);
 
   // Update map style dynamically on theme changes
   useEffect(() => {
@@ -413,7 +459,7 @@ export default function MapPanel() {
       // After setStyle, all sources/layers are wiped. Force re-sync by
       // updating routesData identity so the syncMapData effect re-fires.
       map.once('styledata', () => {
-        setRoutesData(prev => ({ ...prev }));
+        setStyleTrigger(prev => prev + 1);
       });
     }
   }, [theme, useMockMap]);
@@ -422,6 +468,11 @@ export default function MapPanel() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || useMockMap) return;
+
+    // Skip auto-fitting bounds if the user has an active selection (stop or homestay)
+    if (state.activeStopId || state.activeHomestayOnMapId || state.selectedHomestayId) {
+      return;
+    }
 
     const fitOnLoad = () => {
       fitTripBounds(map);
@@ -436,7 +487,7 @@ export default function MapPanel() {
     return () => {
       map.off('load', fitOnLoad);
     };
-  }, [state.trip, mapLayer, useMockMap, fitTripBounds]);
+  }, [state.trip?.id, mapLayer, useMockMap, fitTripBounds, state.activeStopId, state.activeHomestayOnMapId, state.selectedHomestayId]);
 
   // Handle external map panning events (e.g. from geocoding in ChatPanel)
   useEffect(() => {
@@ -462,374 +513,465 @@ export default function MapPanel() {
     return () => window.removeEventListener('show-nearby-places', handleTrigger);
   }, []);
 
+  // Handle external POI popup trigger (from itinerary panel list click or map marker click)
+  useEffect(() => {
+    const handleShowPoi = (e) => {
+      const poi = e.detail;
+      if (useMockMap) return;
+      if (mapRef.current) {
+        const currentZoom = mapRef.current.getZoom();
+        mapRef.current.easeTo({
+          center: [poi.lng, poi.lat],
+          zoom: Math.max(currentZoom, 15),
+          duration: 800
+        });
+
+        const popupContent = document.createElement('div');
+        popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
+        popupContent.innerHTML = `
+          <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 200px; box-shadow: 0 8px 30px rgba(0,0,0,0.4); position: relative;">
+            <button class="poi-close-btn" style="position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; font-size: 14px; font-family: inherit; padding: 4px; pointer-events: auto !important; z-index: 99;">✕</button>
+            <div class="popup-meta" style="font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-bottom: 4px;">${poi.category} · ★ ${poi.rating} (${poi.reviewsCount || 0})</div>
+            <div class="popup-title" style="font-size: 13px; font-weight: 700; margin-bottom: 4px; padding-right: 15px;">${poi.name}</div>
+            <div class="popup-desc" style="font-size: 11px; margin-bottom: 8px;">${poi.address}</div>
+            <button class="add-poi-btn" style="width: 100%; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">➕ Add to Itinerary</button>
+          </div>
+        `;
+
+        // Prevent clicks/mousedown inside the popup from propagating to the map
+        popupContent.addEventListener('click', (ev) => ev.stopPropagation());
+        popupContent.addEventListener('mousedown', (ev) => ev.stopPropagation());
+
+        const handleClose = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          activePOIPopupRef.current = false;
+          popup.remove();
+        };
+
+        const closeBtn = popupContent.querySelector('.poi-close-btn');
+        closeBtn.addEventListener('click', handleClose);
+        closeBtn.addEventListener('mousedown', handleClose);
+
+        popupContent.querySelector('.add-poi-btn').addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          activePOIPopupRef.current = false; // Reset ref so stop popup can open
+          let targetDayId = 'day-1';
+          if (state.activeStopId) {
+            const activeDay = state.trip.days.find(d => d.stops.some(s => s.id === state.activeStopId));
+            if (activeDay) targetDayId = activeDay.id;
+          }
+          
+          const newStop = {
+            id: `stop-poi-${Date.now()}`,
+            name: poi.name,
+            lat: poi.lat,
+            lng: poi.lng,
+            timeEstimate: '01:00 PM - 02:00 PM',
+            costEstimate: 0,
+            rationale: `Added from nearby recommendations. Rated ${poi.rating} stars.`,
+          };
+
+          dispatch({ type: 'ADD_STOP', payload: { dayId: targetDayId, stop: newStop } });
+          dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
+          dispatch({ type: 'SELECT_STOP', payload: newStop.id });
+        });
+
+        if (popupRef.current) popupRef.current.remove();
+        
+        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 15 })
+          .setLngLat([poi.lng, poi.lat])
+          .setDOMContent(popupContent)
+          .addTo(mapRef.current);
+          
+        popupRef.current = popup;
+        activePOIPopupRef.current = true;
+
+        popup.on('close', () => {
+          activePOIPopupRef.current = false;
+        });
+      }
+    };
+    window.addEventListener('show-poi-popup', handleShowPoi);
+    return () => window.removeEventListener('show-poi-popup', handleShowPoi);
+  }, [useMockMap, state.activeStopId, state.trip.days, dispatch]);
+
   // Synchronize state with MapLibre layers & markers
   useEffect(() => {
     const map = mapRef.current;
     if (!map || useMockMap) return;
 
     const syncMapData = () => {
-      markersRef.current.forEach(m => m.remove());
-      markersRef.current = [];
+      try {
+        markersRef.current.forEach(m => m.remove());
+        markersRef.current = [];
 
-      if (popupRef.current) {
-        popupRef.current.remove();
-        popupRef.current = null;
-      }
-
-      state.trip.days.forEach(day => {
-        const layerId = `route-day-${day.id}`;
-        const sourceId = `route-source-day-${day.id}`;
-        if (map.getLayer(layerId)) map.removeLayer(layerId);
-        if (map.getSource(sourceId)) map.removeSource(sourceId);
-        
-        const commuteLayerId = `commute-day-${day.id}`;
-        const commuteSourceId = `commute-source-day-${day.id}`;
-        if (map.getLayer(commuteLayerId)) map.removeLayer(commuteLayerId);
-        if (map.getSource(commuteSourceId)) map.removeSource(commuteSourceId);
-      });
-
-      // Always render routes and stops
-      const isActiveDay = (dayId) => !highlightedDayId || dayId === highlightedDayId;
-
-      state.trip.days.forEach(day => {
-        const routeGeoJSON = routesData[day.id];
-        if (!routeGeoJSON) return;
-
-        const sourceId = `route-source-day-${day.id}`;
-        const layerId = `route-day-${day.id}`;
-        const color = getDayColorHex(day.colorHue);
-        
-        const active = isActiveDay(day.id);
-        const lineWidth = active ? 5 : 2;
-        const lineOpacity = active ? 0.95 : 0.15;
-
-        map.addSource(sourceId, {
-          type: 'geojson',
-          data: routeGeoJSON
-        });
-
-        map.addLayer({
-          id: layerId,
-          type: 'line',
-          source: sourceId,
-          layout: {
-            'line-join': 'round',
-            'line-cap': 'round'
-          },
-          paint: {
-            'line-color': color,
-            'line-width': lineWidth,
-            'line-opacity': lineOpacity
-          }
-        });
-      });
-
-      state.trip.days.forEach((day, dayIdx) => {
-        const isActiveDayForMarkers = !highlightedDayId || day.id === highlightedDayId;
-
-        day.stops.forEach((stop, idx) => {
-          const el = document.createElement('div');
-          el.className = 'stop-marker';
-          
-          const color = getDayColorHex(day.colorHue);
-          el.style.backgroundColor = color;
-          el.style.color = '#0a0c10';
-          el.innerText = `${idx + 1}`;
-
-          // Dim if not active day
-          if (!isActiveDayForMarkers) {
-            el.style.opacity = '0.2';
-            el.style.animation = 'none';
-          }
-
-          // Highlight active stop without overwriting MapLibre's transform
-          if (state.activeStopId === stop.id) {
-            el.style.outline = `2px solid ${color}`;
-            el.style.outlineOffset = '2px';
-            el.style.boxShadow = `0 0 15px ${color}`;
-          }
-
-          el.addEventListener('click', (e) => {
-            e.stopPropagation();
-            handleMapStopClick(stop.id);
-          });
-
-          el.addEventListener('mouseenter', () => {
-            handleMapStopHover(stop.id);
-          });
-          el.addEventListener('mouseleave', () => {
-            handleMapStopHover(null);
-          });
-
-          const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-            .setLngLat([stop.lng, stop.lat])
-            .addTo(map);
-
-          markersRef.current.push(marker);
-        });
-
-        // Travel-time labels between consecutive stops
-        if (day.stops.length >= 2 && isActiveDayForMarkers) {
-          for (let i = 0; i < day.stops.length - 1; i++) {
-            const s1 = day.stops[i];
-            const s2 = day.stops[i + 1];
-            const midLat = (s1.lat + s2.lat) / 2;
-            const midLng = (s1.lng + s2.lng) / 2;
-            const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
-            const travelTime = getTravelLabel(dist);
-
-            const labelEl = document.createElement('div');
-            labelEl.className = 'route-time-label';
-            labelEl.textContent = travelTime;
-
-            const labelMarker = new maplibregl.Marker({
-              element: labelEl,
-              anchor: 'center',
-            })
-              .setLngLat([midLng, midLat])
-              .addTo(map);
-
-            markersRef.current.push(labelMarker);
+        if (state.nearbyPOIs.length === 0 && activePOIPopupRef.current) {
+          activePOIPopupRef.current = false;
+          if (popupRef.current) {
+            popupRef.current.remove();
+            popupRef.current = null;
           }
         }
-      });
 
-      // Active stop popup
-      if (state.activeStopId) {
-        const stop = activeStop;
-        if (stop) {
-          const dayColor = getDayColorHex(stop.dayColorHue);
+        if (popupRef.current && !activePOIPopupRef.current) {
+          popupRef.current.remove();
+          popupRef.current = null;
+        }
+
+        state.trip.days.forEach(day => {
+          const layerId = `route-day-${day.id}`;
+          const sourceId = `route-source-day-${day.id}`;
+          if (map.getLayer(layerId)) map.removeLayer(layerId);
+          if (map.getSource(sourceId)) map.removeSource(sourceId);
+          
+          const commuteLayerId = `commute-day-${day.id}`;
+          const commuteSourceId = `commute-source-day-${day.id}`;
+          if (map.getLayer(commuteLayerId)) map.removeLayer(commuteLayerId);
+          if (map.getSource(commuteSourceId)) map.removeSource(commuteSourceId);
+        });
+
+        // Always render routes and stops
+        const isActiveDay = (dayId) => !highlightedDayId || dayId === highlightedDayId;
+
+        state.trip.days.forEach(day => {
+          let routeGeoJSON = routesData[day.id];
+          
+          if (!routeGeoJSON && day.stops.length >= 2) {
+            routeGeoJSON = {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: day.stops.map(s => [s.lng, s.lat])
+              }
+            };
+          }
+
+          if (!routeGeoJSON) return;
+
+          const sourceId = `route-source-day-${day.id}`;
+          const layerId = `route-day-${day.id}`;
+          const color = getDayColorHex(day.colorHue);
+          
+          const active = isActiveDay(day.id);
+          const lineWidth = active ? 5 : 2;
+          const lineOpacity = active ? 0.95 : 0.15;
+
+          map.addSource(sourceId, {
+            type: 'geojson',
+            data: routeGeoJSON
+          });
+
+          map.addLayer({
+            id: layerId,
+            type: 'line',
+            source: sourceId,
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': color,
+              'line-width': lineWidth,
+              'line-opacity': lineOpacity
+            }
+          });
+        });
+
+        state.trip.days.forEach((day, dayIdx) => {
+          const isActiveDayForMarkers = !highlightedDayId || day.id === highlightedDayId;
+
+          day.stops.forEach((stop, idx) => {
+            const el = document.createElement('div');
+            el.className = 'stop-marker';
+            
+            const color = getDayColorHex(day.colorHue);
+            el.style.backgroundColor = color;
+            el.style.color = '#0a0c10';
+            el.innerText = `${idx + 1}`;
+
+            // Dim if not active day
+            if (!isActiveDayForMarkers) {
+              el.style.opacity = '0.2';
+              el.style.animation = 'none';
+            }
+
+            // Highlight active stop without overwriting MapLibre's transform
+            if (state.activeStopId === stop.id) {
+              el.style.outline = `2px solid ${color}`;
+              el.style.outlineOffset = '2px';
+              el.style.boxShadow = `0 0 15px ${color}`;
+            }
+
+            el.addEventListener('click', (e) => {
+              e.stopPropagation();
+              handleMapStopClick(stop.id);
+            });
+
+            el.addEventListener('mouseenter', () => {
+              handleMapStopHover(stop.id);
+            });
+            el.addEventListener('mouseleave', () => {
+              handleMapStopHover(null);
+            });
+
+            const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+              .setLngLat([stop.lng, stop.lat])
+              .addTo(map);
+
+            markersRef.current.push(marker);
+          });
+
+          // Travel-time labels between consecutive stops
+          if (day.stops.length >= 2 && isActiveDayForMarkers) {
+            for (let i = 0; i < day.stops.length - 1; i++) {
+              const s1 = day.stops[i];
+              const s2 = day.stops[i + 1];
+              const midLat = (s1.lat + s2.lat) / 2;
+              const midLng = (s1.lng + s2.lng) / 2;
+
+              let travelTime = '';
+              const routeData = routesData[day.id];
+              if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.legs && routeData.features[0].properties.legs[i]) {
+                const leg = routeData.features[0].properties.legs[i];
+                const distance = leg.distance;
+                const duration = leg.duration;
+                const mins = Math.round(duration / 60);
+                if (distance < 1000) {
+                  travelTime = `${Math.round(distance)}m (${mins}min)`;
+                } else {
+                  travelTime = `${(distance / 1000).toFixed(1)}km (${mins}min)`;
+                }
+              } else {
+                const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
+                travelTime = getTravelLabel(dist);
+              }
+
+              const labelEl = document.createElement('div');
+              labelEl.className = 'route-time-label';
+              labelEl.textContent = travelTime;
+
+              const labelMarker = new maplibregl.Marker({
+                element: labelEl,
+                anchor: 'center',
+              })
+                .setLngLat([midLng, midLat])
+                .addTo(map);
+
+              markersRef.current.push(labelMarker);
+            }
+          }
+        });
+
+        // Active stop popup
+        if (state.activeStopId && !activePOIPopupRef.current) {
+          const stop = activeStop;
+          if (stop) {
+            const dayColor = getDayColorHex(stop.dayColorHue);
+            const popupContent = document.createElement('div');
+            popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
+            
+            popupContent.innerHTML = `
+              <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.4); min-width: 220px; max-width: 280px; position: relative;">
+                <button class="popup-close-btn" style="position: absolute; top: 10px; right: 10px; background: none; border: none; cursor: pointer; font-size: 14px; z-index: 99; font-family: inherit; padding: 4px; pointer-events: auto !important;">✕</button>
+                <div style="height: 3px; background: ${dayColor}; border-radius: 2px 2px 0 0;"></div>
+                <div style="padding: 14px 16px;">
+                  <div class="popup-title" style="font-size: 14px; font-weight: 700; margin-bottom: 4px; padding-right: 18px;">${stop.name}</div>
+                  <div class="popup-meta" style="display: flex; gap: 8px; font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
+                    <span>${stop.timeEstimate || ''}</span>
+                    ${stop.costEstimate > 0 ? `<span>·</span><span>¥${stop.costEstimate.toLocaleString()}</span>` : '<span>·</span><span>Free</span>'}
+                  </div>
+                  <div class="popup-desc" style="font-size: 12px; line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${stop.rationale}</div>
+                  <div style="display: flex; gap: 6px; margin-top: 10px;">
+                    <button class="nearby-btn" style="flex: 1; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🔍 Nearby</button>
+                    <button class="delete-btn" style="padding: 6px 10px; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🗑️</button>
+                  </div>
+                </div>
+              </div>
+            `;
+
+            // Prevent clicks/mousedown inside the popup from propagating to the map
+            popupContent.addEventListener('click', (ev) => ev.stopPropagation());
+            popupContent.addEventListener('mousedown', (ev) => ev.stopPropagation());
+
+            const dayId = stop.dayId;
+
+            const handleClose = (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dispatch({ type: 'SELECT_STOP', payload: null });
+            };
+
+            const closeBtn = popupContent.querySelector('.popup-close-btn');
+            closeBtn.addEventListener('click', handleClose);
+            closeBtn.addEventListener('mousedown', handleClose);
+
+            popupContent.querySelector('.nearby-btn').addEventListener('click', (e) => {
+              e.stopPropagation();
+              handleShowNearbyPlaces(stop);
+            });
+
+            popupContent.querySelector('.delete-btn').addEventListener('click', (e) => {
+              e.stopPropagation();
+              if (dayId) {
+                dispatch({ type: 'REMOVE_STOP', payload: { dayId, stopId: stop.id } });
+                dispatch({ type: 'SELECT_STOP', payload: null });
+              }
+            });
+
+            const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 25 })
+              .setLngLat([stop.lng, stop.lat])
+              .setDOMContent(popupContent)
+              .addTo(map);
+
+            popupRef.current = popup;
+          }
+        }
+
+        // Render homestays overlay if showHomestays is true
+        if (state.showHomestays) {
+          visibleHomestays.forEach(home => {
+            const el = document.createElement('div');
+            el.className = 'custom-homestay-marker cursor-pointer transition-all duration-300';
+            
+            const isSelected = state.selectedHomestayId === home.id;
+            const isHovered = state.hoveredHomestayId === home.id;
+            const isHighlighted = isSelected || isHovered;
+
+            el.innerHTML = `
+              <div class="w-8 h-8 rounded-lg flex items-center justify-center shadow-lg relative" style="background: ${isHighlighted ? 'var(--accent)' : 'var(--surface)'}; border: 1.5px solid ${isHighlighted ? 'var(--accent)' : 'var(--border)'}; color: ${isHighlighted ? 'var(--bg)' : 'var(--accent)'}; transition: all 0.3s; transform: ${isHighlighted ? 'scale(1.25)' : 'scale(1)'};">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                ${isHighlighted ? `<div class="absolute -inset-1 rounded-lg border border-accent animate-ping opacity-60" style="pointer-events: none;"></div>` : ''}
+              </div>
+            `;
+
+            el.addEventListener('click', (e) => {
+              e.stopPropagation();
+              handleMapHomestayClick(home.id);
+            });
+
+            el.addEventListener('mouseenter', () => {
+              dispatch({ type: 'HOVER_HOMESTAY', payload: home.id });
+            });
+            el.addEventListener('mouseleave', () => {
+              dispatch({ type: 'HOVER_HOMESTAY', payload: null });
+            });
+
+            const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+              .setLngLat([home.lng, home.lat])
+              .addTo(map);
+
+            markersRef.current.push(marker);
+          });
+        }
+
+        // Homestay popover on map
+        if (state.showHomestays && activeHomestayOnMap) {
+          const home = activeHomestayOnMap;
+          const isSelected = state.selectedHomestayId === home.id;
           const popupContent = document.createElement('div');
           popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
           
           popupContent.innerHTML = `
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.4); min-width: 220px; max-width: 280px;">
-              <div style="height: 3px; background: ${dayColor}; border-radius: 2px 2px 0 0;"></div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.4); min-width: 220px; max-width: 280px; position: relative;">
+              <button class="homestay-close-btn" style="position: absolute; top: 10px; right: 10px; background: none; border: none; cursor: pointer; font-size: 14px; z-index: 99; font-family: inherit; padding: 4px; pointer-events: auto !important;">✕</button>
+              <div style="height: 3px; background: var(--warm); border-radius: 2px 2px 0 0;"></div>
               <div style="padding: 14px 16px;">
-                <div style="font-size: 14px; font-weight: 700; margin-bottom: 4px; color: var(--text);">${stop.name}</div>
-                <div style="display: flex; gap: 8px; font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
-                  <span>${stop.timeEstimate || ''}</span>
-                  ${stop.costEstimate > 0 ? `<span>·</span><span>¥${stop.costEstimate.toLocaleString()}</span>` : '<span>·</span><span>Free</span>'}
+                <div class="popup-title" style="font-size: 14px; font-weight: 700; margin-bottom: 4px;">${home.name}</div>
+                <div class="popup-meta" style="display: flex; gap: 8px; font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
+                  <span>★ ${home.rating}</span>
+                  <span>·</span>
+                  <span>¥${home.pricePerNight.toLocaleString()}/night</span>
+                  <span>·</span>
+                  <span>${home.avgCommuteMinutes}min avg</span>
                 </div>
-                <div style="font-size: 12px; color: var(--muted); line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${stop.rationale}</div>
-                <div style="display: flex; gap: 6px; margin-top: 10px;">
-                  <button class="nearby-btn" style="flex: 1; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🔍 Nearby</button>
-                  <button class="delete-btn" style="padding: 6px 10px; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🗑️</button>
+                <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
+                  ${home.amenities.slice(0, 4).map(a => `<span class="popup-meta" style="padding: 2px 6px; border-radius: 4px; background: var(--surface-2); font-size: 9px; font-family: 'JetBrains Mono', monospace;">${a}</span>`).join('')}
                 </div>
+                <div class="popup-desc" style="font-size: 12px; line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${home.rationale}</div>
+                <button class="select-btn" style="display: block; width: 100%; padding: 8px 0; margin-top: 10px; background: ${isSelected ? 'var(--accent)' : 'var(--surface-2)'}; color: ${isSelected ? 'var(--bg)' : 'var(--text)'}; border: 1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;">${isSelected ? '✓ Selected as Lodging' : 'Choose This Homestay'}</button>
               </div>
             </div>
           `;
 
-          const dayId = stop.dayId;
+          // Prevent clicks/mousedown inside the popup from propagating to the map
+          popupContent.addEventListener('click', (ev) => ev.stopPropagation());
+          popupContent.addEventListener('mousedown', (ev) => ev.stopPropagation());
 
-          popupContent.querySelector('.nearby-btn').addEventListener('click', (e) => {
+          const handleClose = (e) => {
+            e.preventDefault();
             e.stopPropagation();
-            handleShowNearbyPlaces(stop);
+            dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
+          };
+
+          const closeBtn = popupContent.querySelector('.homestay-close-btn');
+          closeBtn.addEventListener('click', handleClose);
+          closeBtn.addEventListener('mousedown', handleClose);
+
+          popupContent.querySelector('.select-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            dispatch({ type: 'SELECT_HOMESTAY', payload: isSelected ? null : home.id });
           });
 
-          popupContent.querySelector('.delete-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (dayId) {
-              dispatch({ type: 'REMOVE_STOP', payload: { dayId, stopId: stop.id } });
-              dispatch({ type: 'SELECT_STOP', payload: null });
-            }
-          });
-
-          const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, offset: 15 })
-            .setLngLat([stop.lng, stop.lat])
+          const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 25 })
+            .setLngLat([home.lng, home.lat])
             .setDOMContent(popupContent)
             .addTo(map);
 
           popupRef.current = popup;
         }
-      }
 
-      // Render homestays overlay if showHomestays is true
-      if (state.showHomestays) {
-        const visibleHomestays = state.highlightedDayId
-          ? state.homestays.filter(h => h.dayId === state.highlightedDayId)
-          : state.homestays;
-
-        visibleHomestays.forEach(home => {
-          const el = document.createElement('div');
-          el.className = 'custom-homestay-marker cursor-pointer transition-all duration-300';
-          
-          const isSelected = state.selectedHomestayId === home.id;
-          const isHovered = state.hoveredHomestayId === home.id;
-          const isHighlighted = isSelected || isHovered;
-
-          el.innerHTML = `
-            <div class="w-8 h-8 rounded-lg flex items-center justify-center shadow-lg relative" style="background: ${isHighlighted ? 'var(--accent)' : 'var(--surface)'}; border: 1.5px solid ${isHighlighted ? 'var(--accent)' : 'var(--border)'}; color: ${isHighlighted ? 'var(--bg)' : 'var(--accent)'}; transition: all 0.3s; transform: ${isHighlighted ? 'scale(1.25)' : 'scale(1)'};">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-              </svg>
-              ${isHighlighted ? `<div class="absolute -inset-1 rounded-lg border border-accent animate-ping opacity-60" style="pointer-events: none;"></div>` : ''}
-            </div>
-          `;
-
-          el.addEventListener('click', (e) => {
-            e.stopPropagation();
-            handleMapHomestayClick(home.id);
-          });
-
-          el.addEventListener('mouseenter', () => {
-            dispatch({ type: 'HOVER_HOMESTAY', payload: home.id });
-          });
-          el.addEventListener('mouseleave', () => {
-            dispatch({ type: 'HOVER_HOMESTAY', payload: null });
-          });
-
-          const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-            .setLngLat([home.lng, home.lat])
-            .addTo(map);
-
-          markersRef.current.push(marker);
-        });
-      }
-
-      // Homestay popover on map
-      if (state.showHomestays && activeHomestayOnMap) {
-        const home = activeHomestayOnMap;
-        const isSelected = state.selectedHomestayId === home.id;
-        const popupContent = document.createElement('div');
-        popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
-        
-        popupContent.innerHTML = `
-          <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.4); min-width: 220px; max-width: 280px;">
-            <div style="height: 3px; background: var(--warm); border-radius: 2px 2px 0 0;"></div>
-            <div style="padding: 14px 16px;">
-              <div style="font-size: 14px; font-weight: 700; margin-bottom: 4px; color: var(--text);">${home.name}</div>
-              <div style="display: flex; gap: 8px; font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
-                <span>★ ${home.rating}</span>
-                <span>·</span>
-                <span>¥${home.pricePerNight.toLocaleString()}/night</span>
-                <span>·</span>
-                <span>${home.avgCommuteMinutes}min avg</span>
-              </div>
-              <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
-                ${home.amenities.slice(0, 4).map(a => `<span style="padding: 2px 6px; border-radius: 4px; background: var(--surface-2); font-size: 9px; color: var(--muted); font-family: 'JetBrains Mono', monospace;">${a}</span>`).join('')}
-              </div>
-              <div style="font-size: 12px; color: var(--muted); line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${home.rationale}</div>
-              <button class="select-btn" style="display: block; width: 100%; padding: 8px 0; margin-top: 10px; background: ${isSelected ? 'var(--accent)' : 'var(--surface-2)'}; color: ${isSelected ? 'var(--bg)' : 'var(--text)'}; border: 1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;">${isSelected ? '✓ Selected as Lodging' : 'Choose This Homestay'}</button>
-            </div>
-          </div>
-        `;
-
-        popupContent.querySelector('.select-btn').addEventListener('click', (e) => {
-          e.stopPropagation();
-          dispatch({ type: 'SELECT_HOMESTAY', payload: isSelected ? null : home.id });
-        });
-
-        const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, offset: 25 })
-          .setLngLat([home.lng, home.lat])
-          .setDOMContent(popupContent)
-          .addTo(map);
-
-        popupRef.current = popup;
-      }
-
-      // Nearby POI markers
-      // Nearby POI markers
-      if (state.nearbyPOIs.length > 0) {
-        state.nearbyPOIs.forEach((poi) => {
-          const el = document.createElement('div');
-          el.className = 'custom-poi-marker cursor-pointer';
-          
-          let icon = '📍';
-          if (poi.category === 'food') icon = '🍱';
-          else if (poi.category === 'cafe') icon = '☕';
-          else if (poi.category === 'sight') icon = '🏛️';
-
-          el.innerHTML = `
-            <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer;">
-              ${icon}
-            </div>
-          `;
-
-          el.addEventListener('click', (e) => {
-            e.stopPropagation();
+        // Nearby POI markers
+        // Nearby POI markers
+        if (state.nearbyPOIs.length > 0) {
+          state.nearbyPOIs.forEach((poi) => {
+            const el = document.createElement('div');
+            el.className = 'custom-poi-marker cursor-pointer';
             
-            const popupContent = document.createElement('div');
-            popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
-            popupContent.innerHTML = `
-              <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 200px; box-shadow: 0 8px 30px rgba(0,0,0,0.4);">
-                <div style="font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 4px;">${poi.category} · ★ ${poi.rating} (${poi.reviewsCount})</div>
-                <div style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px;">${poi.name}</div>
-                <div style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">${poi.address}</div>
-                <button class="add-poi-btn" style="width: 100%; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">➕ Add to Itinerary</button>
+            let icon = '📍';
+            if (poi.category === 'food') icon = '🍱';
+            else if (poi.category === 'cafe') icon = '☕';
+            else if (poi.category === 'sight') icon = '🏛️';
+
+            el.innerHTML = `
+              <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer;">
+                ${icon}
               </div>
             `;
 
-            popupContent.querySelector('.add-poi-btn').addEventListener('click', (ev) => {
-              ev.stopPropagation();
-              let targetDayId = 'day-1';
-              if (state.activeStopId) {
-                const activeDay = state.trip.days.find(d => d.stops.some(s => s.id === state.activeStopId));
-                if (activeDay) targetDayId = activeDay.id;
-              }
-              
-              const newStop = {
-                id: `stop-poi-${Date.now()}`,
-                name: poi.name,
-                lat: poi.lat,
-                lng: poi.lng,
-                timeEstimate: '01:00 PM - 02:00 PM',
-                costEstimate: 0,
-                rationale: `Added from nearby recommendations. Rated ${poi.rating} stars.`,
-              };
-
-              dispatch({ type: 'ADD_STOP', payload: { dayId: targetDayId, stop: newStop } });
-              dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
-              dispatch({ type: 'SELECT_STOP', payload: newStop.id });
+            el.addEventListener('click', (e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent('show-poi-popup', { detail: poi }));
             });
 
-            if (popupRef.current) popupRef.current.remove();
-            const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, offset: 15 })
+            const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
               .setLngLat([poi.lng, poi.lat])
-              .setDOMContent(popupContent)
               .addTo(map);
-            popupRef.current = popup;
+            markersRef.current.push(marker);
           });
-
-          const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-            .setLngLat([poi.lng, poi.lat])
-            .addTo(map);
-          markersRef.current.push(marker);
-        });
+        }
+        console.log('[DEBUG] syncMapData finished. markersRef count:', markersRef.current.length, 'stop-marker DOM count:', document.querySelectorAll('.stop-marker').length);
+      } catch (err) {
+        console.error('syncMapData inner error:', err);
       }
     };
 
-    // Use 'idle' event which fires after style is fully loaded and all rendering is done.
-    // This avoids the race condition where map.loaded() returns true but style isn't ready.
-    const runSync = () => {
-      try {
-        syncMapData();
-      } catch (e) {
-        console.warn('syncMapData failed, retrying on idle:', e);
-        map.once('idle', syncMapData);
-      }
-    };
+    syncMapDataRef.current = syncMapData;
 
-    if (map.isStyleLoaded()) {
-      runSync();
-    } else {
-      map.once('load', runSync);
+    if (map && map.isStyleLoaded()) {
+      syncMapData();
     }
 
-    const onMapClick = () => {
-      dispatch({ type: 'SELECT_STOP', payload: null });
-      dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
-      dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
-    };
-    map.on('click', onMapClick);
-
     return () => {
-      map.off('click', onMapClick);
-      map.off('load', runSync);
-      map.off('idle', syncMapData);
       markersRef.current.forEach(m => m.remove());
       markersRef.current = [];
-      if (popupRef.current) popupRef.current.remove();
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
     };
   }, [
     state.trip, 
@@ -843,9 +985,11 @@ export default function MapPanel() {
     activeHomestay, 
     activeHomestayOnMap, 
     activeStop, 
+    visibleHomestays,
     useMockMap,
     getDayCogLatLng,
-    dispatch
+    dispatch,
+    styleTrigger
   ]);
 
   return (
@@ -935,8 +1079,23 @@ export default function MapPanel() {
                   const p2 = mapCoordsToSvg(s2.lat, s2.lng);
                   const midX = (p1.x + p2.x) / 2;
                   const midY = (p1.y + p2.y) / 2;
-                  const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
-                  const label = getTravelLabel(dist);
+
+                  let label = '';
+                  const routeData = routesData[day.id];
+                  if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.legs && routeData.features[0].properties.legs[i]) {
+                    const leg = routeData.features[0].properties.legs[i];
+                    const distance = leg.distance;
+                    const duration = leg.duration;
+                    const mins = Math.round(duration / 60);
+                    if (distance < 1000) {
+                      label = `${Math.round(distance)}m (${mins}min)`;
+                    } else {
+                      label = `${(distance / 1000).toFixed(1)}km (${mins}min)`;
+                    }
+                  } else {
+                    const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
+                    label = getTravelLabel(dist);
+                  }
 
                   return (
                     <foreignObject
@@ -999,7 +1158,7 @@ export default function MapPanel() {
             {/* Homestays Overlay — visible if state.showHomestays is true */}
             {state.showHomestays && (
               <g className="fade-in">
-                {state.homestays.map((home) => {
+                {visibleHomestays.map((home) => {
                   const { x, y } = mapCoordsToSvg(home.lat, home.lng);
                   const isSelected = state.selectedHomestayId === home.id;
                   const isHovered = state.hoveredHomestayId === home.id;

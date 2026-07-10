@@ -21,6 +21,7 @@ const initialState = {
   showHomestays: true, // toggled via map control
   nearbyPOIs: [], // nearby cafes, restaurants, shops for active stop
   loadingPOIs: false, // loading state for nearby POIs
+  routesData: {}, // OSRM route data mapped by dayId
 };
 
 function tripReducer(state, action) {
@@ -91,7 +92,12 @@ function tripReducer(state, action) {
       };
       
     case 'SELECT_HOMESTAY':
-      return { ...state, selectedHomestayId: action.payload };
+      return {
+        ...state,
+        selectedHomestayId: action.payload,
+        activeStopId: action.payload ? null : state.activeStopId,
+        nearbyPOIs: action.payload ? [] : state.nearbyPOIs
+      };
       
     case 'HOVER_HOMESTAY':
       return { ...state, hoveredHomestayId: action.payload };
@@ -117,12 +123,34 @@ function tripReducer(state, action) {
         },
       };
 
+    case 'SET_ROUTE_DATA':
+      return {
+        ...state,
+        routesData: {
+          ...state.routesData,
+          [action.payload.dayId]: action.payload.routeData,
+        },
+      };
+
     // ─── New Interaction Actions ───
     case 'HOVER_STOP':
       return { ...state, hoveredStopId: action.payload };
 
-    case 'SELECT_STOP':
-      return { ...state, activeStopId: action.payload };
+    case 'SELECT_STOP': {
+      const stopId = action.payload;
+      let highlightedDayId = state.highlightedDayId;
+      if (stopId) {
+        const targetDay = state.trip.days.find(d => d.stops.some(s => s.id === stopId));
+        if (targetDay) {
+          highlightedDayId = targetDay.id;
+        }
+      }
+      return {
+        ...state,
+        activeStopId: stopId,
+        highlightedDayId
+      };
+    }
 
     case 'SET_MAP_LAYER':
       return {
@@ -155,6 +183,7 @@ function tripReducer(state, action) {
         isGenerating: false,
         isInterviewMode: false,
         mapLayer: 'stops',
+        routesData: {},
       };
 
     case 'LOAD_TRIP': {
@@ -175,6 +204,7 @@ function tripReducer(state, action) {
         hasTrip: true,
         isGenerating: false,
         isInterviewMode: false,
+        routesData: {},
       };
     }
       

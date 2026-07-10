@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTrip } from '../../context/TripContext';
 import { getDayColorHex } from '../../utils/colors';
+import { haversine } from '../../utils/haversine';
+import { fetchOptimizedOrder } from '../../utils/routeService';
 
 /* ─── Skeleton Shimmer for Generating State ─── */
 function SkeletonDay({ idx }) {
@@ -39,8 +41,9 @@ function SkeletonDay({ idx }) {
 
 export default function ItineraryPanel() {
   const { state, dispatch } = useTrip();
-  const [expandedDayId, setExpandedDayId] = useState('day-1');
+  const [expandedDayId, setExpandedDayId] = useState(null);
   const [activeRationaleId, setActiveRationaleId] = useState(null);
+  const [optimizingDayId, setOptimizingDayId] = useState(null);
 
   // Sync expandedDayId with state.highlightedDayId bi-directionally
   useEffect(() => {
@@ -56,9 +59,14 @@ export default function ItineraryPanel() {
     dispatch({ type: 'HIGHLIGHT_DAY', payload: dayId });
   };
 
-  const visibleHomestays = state.highlightedDayId
-    ? state.homestays.filter(h => h.dayId === state.highlightedDayId)
-    : state.homestays;
+  const visibleHomestays = useMemo(() => {
+    if (!expandedDayId) return [];
+    const day = state.trip.days.find(d => d.id === expandedDayId);
+    if (!day || !day.stops || day.stops.length === 0) return [];
+    return state.homestays.filter(h =>
+      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 5)
+    );
+  }, [state.homestays, state.trip.days, expandedDayId]);
 
   // Scroll active stop into view smoothly
   useEffect(() => {
@@ -91,15 +99,55 @@ export default function ItineraryPanel() {
   // Scroll selected homestay into view
   useEffect(() => {
     if (state.selectedHomestayId) {
+      // Find the day this homestay belongs to (first day that has a stop within 5km)
+      const home = state.homestays.find(h => h.id === state.selectedHomestayId);
+      if (home) {
+        const targetDay = state.trip.days.find(d =>
+          d.stops.some(stop => haversine(home.lat, home.lng, stop.lat, stop.lng) <= 5)
+        );
+        if (targetDay && expandedDayId !== targetDay.id) {
+          setExpandedDayId(targetDay.id);
+        }
+      }
+
       const timer = setTimeout(() => {
         const el = document.getElementById(`homestay-card-${state.selectedHomestayId}`);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
-      }, 150);
+      }, 250);
       return () => clearTimeout(timer);
     }
-  }, [state.selectedHomestayId]);
+  }, [state.selectedHomestayId, state.homestays, state.trip.days]);
+
+  const handleOptimizeStops = async (day) => {
+    if (day.stops.length < 3) return;
+    setOptimizingDayId(day.id);
+    try {
+      const coords = day.stops.map(s => [s.lng, s.lat]);
+      const data = await fetchOptimizedOrder(coords, 'foot-walking');
+      if (data && data.code === 'Ok' && data.waypoints) {
+        const stopsWithSequence = day.stops.map((stop, idx) => ({
+          stop,
+          seq: data.waypoints[idx].waypoint_index
+        }));
+        stopsWithSequence.sort((a, b) => a.seq - b.seq);
+        const optimizedStops = stopsWithSequence.map(item => item.stop);
+
+        dispatch({
+          type: 'REORDER_STOPS',
+          payload: {
+            dayId: day.id,
+            stops: optimizedStops
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Failed to optimize stops:', err);
+    } finally {
+      setOptimizingDayId(null);
+    }
+  };
 
   const handleDeleteStop = (dayId, stopId, e) => {
     e.stopPropagation();
@@ -112,6 +160,7 @@ export default function ItineraryPanel() {
   const handleSelectHomestay = (homestayId) => {
     const nextId = state.selectedHomestayId === homestayId ? null : homestayId;
     dispatch({ type: 'SELECT_HOMESTAY', payload: nextId });
+    dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: nextId });
     if (nextId) {
       const home = state.homestays.find(h => h.id === nextId);
       if (home) {
@@ -204,7 +253,18 @@ export default function ItineraryPanel() {
                 const colorHex = getDayColorHex(day.colorHue);
 
                 const dayCost = day.stops.reduce((sum, s) => sum + s.costEstimate, 0);
-                const estCommute = day.stops.length * 25;
+                
+                let estCommute = 0;
+                const routeData = state.routesData[day.id];
+                if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.summary) {
+                  estCommute = Math.round(routeData.features[0].properties.summary.duration / 60);
+                } else {
+                  let totalHaversineDist = 0;
+                  for (let i = 0; i < day.stops.length - 1; i++) {
+                    totalHaversineDist += haversine(day.stops[i].lat, day.stops[i].lng, day.stops[i+1].lat, day.stops[i+1].lng);
+                  }
+                  estCommute = Math.round(totalHaversineDist * 12);
+                }
 
                 return (
                   <div
@@ -265,9 +325,28 @@ export default function ItineraryPanel() {
                         {day.stops.length === 0 ? (
                           <p className="text-[10px] py-3 text-center" style={{ color: 'var(--muted)' }}>No stops added yet</p>
                         ) : (
-                          day.stops.map((stop) => {
+                          day.stops.map((stop, idx) => {
                             const isHovered = state.hoveredStopId === stop.id;
                             const isActive = state.activeStopId === stop.id;
+
+                            const nextStop = day.stops[idx + 1];
+                            let commuteText = '';
+                            if (nextStop) {
+                              const routeData = state.routesData[day.id];
+                              if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.legs && routeData.features[0].properties.legs[idx]) {
+                                const leg = routeData.features[0].properties.legs[idx];
+                                const distance = leg.distance;
+                                const duration = leg.duration;
+                                const mins = Math.round(duration / 60);
+                                const distStr = distance < 1000 ? `${Math.round(distance)}m` : `${(distance / 1000).toFixed(1)}km`;
+                                commuteText = `🚶 ${distStr} · ${mins} min walking`;
+                              } else {
+                                const dist = haversine(stop.lat, stop.lng, nextStop.lat, nextStop.lng);
+                                const mins = Math.round(dist * 12);
+                                const distStr = dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`;
+                                commuteText = `🚶 ${distStr} · ~${mins} min`;
+                              }
+                            }
 
                             return (
                               <div key={stop.id} className="space-y-1">
@@ -376,6 +455,9 @@ export default function ItineraryPanel() {
                                             return (
                                               <div 
                                                 key={poi.id} 
+                                                onClick={() => {
+                                                  window.dispatchEvent(new CustomEvent('show-poi-popup', { detail: poi }));
+                                                }}
                                                 className="flex justify-between items-start gap-2 p-1.5 rounded border transition-colors cursor-pointer"
                                                 style={{
                                                   background: 'var(--surface)',
@@ -401,6 +483,17 @@ export default function ItineraryPanel() {
                                       ) : (
                                         <div className="text-[8px]" style={{ color: 'var(--muted)' }}>No nearby places found.</div>
                                       )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {commuteText && (
+                                  <div className="flex items-center gap-2 pl-3 py-1 my-0.5 text-[9px] font-mono" style={{ color: 'var(--muted)' }}>
+                                    <div className="w-4 flex justify-center">
+                                      <div className="w-0.5 h-3 border-l border-dashed" style={{ borderColor: 'var(--border)' }}></div>
+                                    </div>
+                                    <div className="px-2 py-0.5 rounded bg-white/[0.03] border border-white/[0.05] flex items-center gap-1">
+                                      {commuteText}
                                     </div>
                                   </div>
                                 )}
@@ -438,16 +531,18 @@ export default function ItineraryPanel() {
                             + Add Stop
                           </button>
                           <button
-                            className="flex-1 py-1.5 rounded-lg text-[9px] font-semibold transition-all cursor-pointer"
+                            onClick={() => handleOptimizeStops(day)}
+                            disabled={optimizingDayId === day.id || day.stops.length < 3}
+                            className="flex-1 py-1.5 rounded-lg text-[9px] font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             style={{
                               background: 'var(--accent-dim)',
                               border: '1px solid var(--accent-border)',
                               color: 'var(--accent)'
                             }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(232,93,58,0.15)'; }}
+                            onMouseEnter={(e) => { if (optimizingDayId !== day.id && day.stops.length >= 3) e.currentTarget.style.background = 'rgba(232,93,58,0.15)'; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-dim)'; }}
                           >
-                            Re-optimize
+                            {optimizingDayId === day.id ? 'Optimizing...' : 'Re-optimize'}
                           </button>
                         </div>
                       </div>
@@ -481,92 +576,126 @@ export default function ItineraryPanel() {
                   <p className="text-[9px] mt-0.5 ml-7" style={{ color: 'var(--muted)' }}>Ranked by route fit, price & ratings</p>
                 </div>
 
-                <div className="space-y-2 stagger-children">
-                  {visibleHomestays.map((home) => {
-                    const isSelected = state.selectedHomestayId === home.id;
-                    return (
-                      <div
-                        key={home.id}
-                        id={`homestay-card-${home.id}`}
-                        onMouseEnter={() => handleHoverHomestay(home.id)}
-                        onMouseLeave={() => handleHoverHomestay(null)}
-                        className="p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer"
-                        style={{
-                          background: isSelected
-                            ? 'var(--accent-dim)'
-                            : 'var(--surface-2)',
-                          borderColor: isSelected
-                            ? 'var(--accent-border)'
-                            : 'var(--border)'
-                        }}
-                      >
-                        <div className="flex justify-between items-start">
-                          <h4 className="font-bold text-[11px] flex items-center gap-1.5" style={{ color: 'var(--text)' }}>
-                            <span className="text-sm opacity-70">⌂</span>
-                            {home.name}
-                          </h4>
-                          <div className="flex items-center gap-1 text-[9px] font-mono" style={{ color: 'var(--warm)' }}>
-                            <span>★</span>
-                            <span>{home.rating}</span>
-                            <span style={{ color: 'var(--muted)' }}>({home.reviewCount})</span>
-                          </div>
-                        </div>
-
-                        <p className="text-[9px] font-medium mt-1.5 font-mono flex items-center gap-1" style={{ color: 'var(--accent)' }}>
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                          </svg>
-                          {home.avgCommuteMinutes} min avg to Day 1–{numDays} stops
-                        </p>
-
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {home.amenities.map((amenity, idx) => (
-                            <span
-                              key={idx}
-                              className="px-1.5 py-0.5 rounded border text-[8px] font-mono"
-                              style={{
-                                background: 'var(--surface-3)',
-                                borderColor: 'var(--border)',
-                                color: 'var(--muted)'
-                              }}
-                            >
-                              {amenity}
-                            </span>
-                          ))}
-                        </div>
-
-                        <div className="h-[1px] my-2.5" style={{ background: 'var(--border)' }}></div>
-
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <span className="font-mono text-xs font-bold" style={{ color: 'var(--text)' }}>
-                              ¥{home.pricePerNight.toLocaleString()}
-                            </span>
-                            <span className="text-[8px]" style={{ color: 'var(--muted)' }}> / night</span>
-                          </div>
-                          <button
-                            onClick={() => handleSelectHomestay(home.id)}
-                            className="px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all transform active:scale-95 cursor-pointer"
-                            style={
-                              isSelected
-                                ? {
-                                    background: 'var(--accent)',
-                                    color: 'var(--bg)'
-                                  }
-                                : {
-                                    background: 'var(--surface-3)',
-                                    border: '1px solid var(--border)',
-                                    color: 'var(--text)'
-                                  }
-                            }
+                {expandedDayId ? (
+                  <div className="space-y-2 stagger-children">
+                    {visibleHomestays.length > 0 ? (
+                      visibleHomestays.map((home) => {
+                        const isSelected = state.selectedHomestayId === home.id;
+                        const activeDayNum = state.trip.days.find(d => d.id === expandedDayId)?.dayNumber;
+                        return (
+                          <div
+                            key={home.id}
+                            id={`homestay-card-${home.id}`}
+                            onMouseEnter={() => handleHoverHomestay(home.id)}
+                            onMouseLeave={() => handleHoverHomestay(null)}
+                            className="p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer"
+                            style={{
+                              background: isSelected
+                                ? 'var(--accent-dim)'
+                                : 'var(--surface-2)',
+                              borderColor: isSelected
+                                ? 'var(--accent-border)'
+                                : 'var(--border)'
+                            }}
                           >
-                            {isSelected ? '✓ Selected' : 'Choose'}
-                          </button>
-                        </div>
+                            <div className="flex justify-between items-start">
+                              <h4 className="font-bold text-[11px] flex items-center gap-1.5" style={{ color: 'var(--text)' }}>
+                                <span className="text-sm opacity-70">⌂</span>
+                                {home.name}
+                              </h4>
+                              <div className="flex items-center gap-1 text-[9px] font-mono" style={{ color: 'var(--warm)' }}>
+                                <span>★</span>
+                                <span>{home.rating}</span>
+                                <span style={{ color: 'var(--muted)' }}>({home.reviewCount})</span>
+                              </div>
+                            </div>
+
+                            <p className="text-[9px] font-medium mt-1.5 font-mono flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                              </svg>
+                              {home.avgCommuteMinutes} min avg to Day {activeDayNum || '?'} stops
+                            </p>
+
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {home.amenities.map((amenity, idx) => (
+                                <span
+                                  key={idx}
+                                  className="px-1.5 py-0.5 rounded border text-[8px] font-mono"
+                                  style={{
+                                    background: 'var(--surface-3)',
+                                    borderColor: 'var(--border)',
+                                    color: 'var(--muted)'
+                                  }}
+                                >
+                                  {amenity}
+                                </span>
+                              ))}
+                            </div>
+
+                            <div className="h-[1px] my-2.5" style={{ background: 'var(--border)' }}></div>
+
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <span className="font-mono text-xs font-bold" style={{ color: 'var(--text)' }}>
+                                  ¥{home.pricePerNight.toLocaleString()}
+                                </span>
+                                <span className="text-[8px]" style={{ color: 'var(--muted)' }}> / night</span>
+                              </div>
+                              <button
+                                onClick={() => handleSelectHomestay(home.id)}
+                                className="px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all transform active:scale-95 cursor-pointer"
+                                style={
+                                  isSelected
+                                    ? {
+                                        background: 'var(--accent)',
+                                        color: 'var(--bg)'
+                                      }
+                                    : {
+                                        background: 'var(--surface-3)',
+                                        border: '1px solid var(--border)',
+                                        color: 'var(--text)'
+                                      }
+                                }
+                              >
+                                {isSelected ? '✓ Selected' : 'Choose'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div
+                        className="p-4 rounded-xl border text-center"
+                        style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
+                      >
+                        <p className="text-[10px]" style={{ color: 'var(--muted)' }}>
+                          No nearby lodging found for this day's stops.
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className="p-4 rounded-xl border text-center space-y-2"
+                    style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
+                  >
+                    <div
+                      className="w-8 h-8 rounded-lg mx-auto flex items-center justify-center"
+                      style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)' }}
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: 'var(--accent)' }}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                      </svg>
+                    </div>
+                    <p className="text-[10px] font-semibold" style={{ color: 'var(--text)' }}>
+                      Select a day to see lodging
+                    </p>
+                    <p className="text-[9px] leading-relaxed" style={{ color: 'var(--muted)' }}>
+                      Click on a day above to discover nearby homestays and lodging options matched to that day's route.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </>
