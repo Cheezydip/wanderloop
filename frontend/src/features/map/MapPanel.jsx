@@ -26,6 +26,17 @@ export default function MapPanel() {
 
   const [styleTrigger, setStyleTrigger] = useState(0);
   const routesData = state.routesData;
+  const [closedPopupStopId, setClosedPopupStopId] = useState(null);
+  const [closedPopupHomestayId, setClosedPopupHomestayId] = useState(null);
+
+  // Reset closed popup states when selections change
+  useEffect(() => {
+    setClosedPopupStopId(null);
+  }, [state.activeStopId]);
+
+  useEffect(() => {
+    setClosedPopupHomestayId(null);
+  }, [state.activeHomestayOnMapId]);
   // Using state.nearbyPOIs from global context
 
   // SVG panning state
@@ -190,6 +201,7 @@ export default function MapPanel() {
       mapRef.current.easeTo({
         center: [activeStop.lng, activeStop.lat],
         zoom: Math.max(currentZoom, 14),
+        offset: [0, -100],
         duration: 800
       });
     }
@@ -214,6 +226,7 @@ export default function MapPanel() {
       mapRef.current.easeTo({
         center: [activeHomestayOnMap.lng, activeHomestayOnMap.lat],
         zoom: Math.max(currentZoom, 13),
+        offset: [0, -120],
         duration: 800
       });
     }
@@ -336,6 +349,7 @@ export default function MapPanel() {
           mapRef.current.easeTo({
             center: [stop.lng, stop.lat],
             zoom: Math.max(currentZoom, 15),
+            offset: [0, -100],
             duration: 500
           });
         }
@@ -523,6 +537,7 @@ export default function MapPanel() {
         mapRef.current.easeTo({
           center: [poi.lng, poi.lat],
           zoom: Math.max(currentZoom, 15),
+          offset: [0, -100],
           duration: 800
         });
 
@@ -765,7 +780,7 @@ export default function MapPanel() {
         });
 
         // Active stop popup
-        if (state.activeStopId && !activePOIPopupRef.current) {
+        if (state.activeStopId && !activePOIPopupRef.current && closedPopupStopId !== state.activeStopId) {
           const stop = activeStop;
           if (stop) {
             const dayColor = getDayColorHex(stop.dayColorHue);
@@ -800,7 +815,7 @@ export default function MapPanel() {
             const handleClose = (e) => {
               e.preventDefault();
               e.stopPropagation();
-              dispatch({ type: 'SELECT_STOP', payload: null });
+              setClosedPopupStopId(state.activeStopId);
             };
 
             const closeBtn = popupContent.querySelector('.popup-close-btn');
@@ -869,7 +884,7 @@ export default function MapPanel() {
         }
 
         // Homestay popover on map
-        if (state.showHomestays && activeHomestayOnMap) {
+        if (state.showHomestays && activeHomestayOnMap && closedPopupHomestayId !== state.activeHomestayOnMapId) {
           const home = activeHomestayOnMap;
           const isSelected = state.selectedHomestayId === home.id;
           const popupContent = document.createElement('div');
@@ -904,7 +919,7 @@ export default function MapPanel() {
           const handleClose = (e) => {
             e.preventDefault();
             e.stopPropagation();
-            dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
+            setClosedPopupHomestayId(state.activeHomestayOnMapId);
           };
 
           const closeBtn = popupContent.querySelector('.homestay-close-btn');
@@ -989,7 +1004,9 @@ export default function MapPanel() {
     useMockMap,
     getDayCogLatLng,
     dispatch,
-    styleTrigger
+    styleTrigger,
+    closedPopupStopId,
+    closedPopupHomestayId
   ]);
 
   return (
