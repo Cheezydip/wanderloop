@@ -21,21 +21,7 @@ function EmptyState() {
     const text = prompt || inputValue;
     if (!text.trim()) return;
 
-    dispatch({ type: 'SET_GENERATING', payload: true });
-
-    // Simulate AI planning delay, then load mock trip
-    setTimeout(() => {
-      dispatch({ type: 'LOAD_TRIP', payload: text });
-      dispatch({
-        type: 'ADD_MESSAGE',
-        payload: {
-          id: `ai-welcome-${Date.now()}`,
-          role: 'assistant',
-          content: `I've crafted a personalized itinerary based on "${text}". Here's your curated plan with route-optimized stops, local recommendations, and smart lodging matches!`,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }, 2800);
+    dispatch({ type: 'START_INTERVIEW', payload: text });
   };
 
   return (

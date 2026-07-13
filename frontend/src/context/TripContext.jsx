@@ -14,6 +14,7 @@ const initialState = {
   selectedHomestayId: null,
   hoveredHomestayId: null,
   activeTab: 'map',
+  mapCenter: null, // { lat, lng, zoom }
 
   // ─── Interaction States ───
   hoveredStopId: null,
@@ -34,8 +35,22 @@ const initialState = {
 
 function tripReducer(state, action) {
   switch (action.type) {
+    case 'SET_MAP_CENTER':
+      return {
+        ...state,
+        mapCenter: action.payload
+      };
+
     case 'SET_TRIP':
-      return { ...state, trip: action.payload, hasTrip: true };
+      return {
+        ...state,
+        trip: {
+          ...action.payload,
+          messages: action.payload.messages || state.trip?.messages || []
+        },
+        hasTrip: true,
+        mapCenter: null
+      };
       
     case 'ADD_STOP':
       return {
@@ -103,8 +118,6 @@ function tripReducer(state, action) {
       return {
         ...state,
         selectedHomestayId: action.payload,
-        activeStopId: action.payload ? null : state.activeStopId,
-        nearbyPOIs: action.payload ? [] : state.nearbyPOIs
       };
       
     case 'HOVER_HOMESTAY':
@@ -167,9 +180,6 @@ function tripReducer(state, action) {
       return {
         ...state,
         mapLayer: action.payload,
-        // Clear cross-layer selections when switching
-        activeStopId: action.payload === 'homestays' ? null : state.activeStopId,
-        activeHomestayOnMapId: action.payload === 'stops' ? null : state.activeHomestayOnMapId,
       };
 
     case 'SELECT_HOMESTAY_ON_MAP':
@@ -180,6 +190,29 @@ function tripReducer(state, action) {
 
     case 'SET_INTERVIEW_MODE':
       return { ...state, isInterviewMode: action.payload };
+
+    case 'START_INTERVIEW':
+      return {
+        ...state,
+        hasTrip: true,
+        isInterviewMode: true,
+        showChat: true,
+        trip: {
+          id: `trip-${Date.now()}`,
+          title: action.payload || 'New Trip',
+          messages: [
+            {
+              id: `u-${Date.now()}`,
+              role: 'user',
+              content: action.payload || '',
+              timestamp: new Date().toISOString()
+            }
+          ],
+          days: [],
+          budget: 25000
+        },
+        budgetItems: []
+      };
 
     case 'START_NEW_TRIP':
       return {
@@ -218,6 +251,40 @@ function tripReducer(state, action) {
         isInterviewMode: false,
         routesData: {},
         budgetItems: DEFAULT_BUDGET_ITEMS,
+      };
+    }
+
+    case 'COMPLETE_INTERVIEW': {
+      const prompt = (action.payload.prompt || '').toLowerCase();
+      let selectedTrip = mockTrip;
+
+      if (prompt.includes('kyoto')) {
+        selectedTrip = mockKyotoTrip;
+      } else if (prompt.includes('osaka')) {
+        selectedTrip = mockOsakaTrip;
+      } else if (prompt.includes('hakone')) {
+        selectedTrip = mockHakoneTrip;
+      }
+
+      const currentMessages = state.trip.messages;
+      const finalMessage = {
+        id: `ai-welcome-${Date.now()}`,
+        role: 'assistant',
+        content: `I've planned your custom ${selectedTrip.title} based on your preferences: Pace is ${action.payload.answers.pace}, focusing on ${action.payload.answers.priority}, with a daily budget limit of ${action.payload.answers.budget}. Check the map for the optimized route and lodging options!`,
+        timestamp: new Date().toISOString()
+      };
+
+      return {
+        ...state,
+        trip: {
+          ...selectedTrip,
+          messages: [...currentMessages, finalMessage]
+        },
+        hasTrip: true,
+        isGenerating: false,
+        isInterviewMode: false,
+        routesData: {},
+        budgetItems: DEFAULT_BUDGET_ITEMS
       };
     }
       

@@ -8,6 +8,7 @@ import routingRouter from './routes/routing.js';
 import geocodingRouter from './routes/geocoding.js';
 import poiRouter from './routes/poi.js';
 import lodgingRouter from './routes/lodging.js';
+import chatRouter from './routes/chat.js';
 
 // Load environment variables from project root .env
 const __filename = fileURLToPath(import.meta.url);
@@ -48,6 +49,7 @@ app.use('/api', routingRouter);
 app.use('/api', geocodingRouter);
 app.use('/api', poiRouter);
 app.use('/api', lodgingRouter);
+app.use('/api', chatRouter);
 
 app.listen(PORT, () => {
   console.log(`[server]: Wanderloop backend listening at http://localhost:${PORT}`);

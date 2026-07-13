@@ -21,56 +21,7 @@ router.get('/lodgings', async (req, res) => {
       return res.status(200).json(cachedData);
     }
 
-    // Bounding box: ~radius metres around the trip center
-    const delta = (radius / 1000) * 0.009; // ~0.009 deg per km
-    const viewbox = `${lng - delta},${lat + delta},${lng + delta},${lat - delta}`;
-    const url = `https://nominatim.openstreetmap.org/search?q=hotel&format=geojson&viewbox=${viewbox}&bounded=1&limit=10`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
-      }
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Nominatim Lodgings returned error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    let features = data.features || [];
-
-    // If no hotels found in the tight box, fall back to mock lodgings for this location
-    if (features.length === 0) {
-      console.warn('[server]: No hotels found via Nominatim in this area. Using mock lodgings.');
-      const cached = generateMockLodgings(lat, lng);
-      poiCache.set(cacheKey, cached);
-      return res.status(200).json(cached);
-    }
-
-    const formattedLodgings = features.map((f, i) => {
-      const coords = f.geometry.coordinates;
-      const name = f.properties.name || f.properties.display_name.split(',')[0] || `Hotel near stops #${i + 1}`;
-      const price = 5000 + Math.floor(Math.random() * 15000);
-      const rating = (4.2 + Math.random() * 0.7).toFixed(1);
-      const reviews = Math.floor(20 + Math.random() * 300);
-      const amenities = ['Free Wifi', 'Air Conditioning', 'Bath Amenities'];
-      if (Math.random() > 0.5) amenities.push('Breakfast Included');
-      if (Math.random() > 0.5) amenities.push('Laundry Service');
-
-      return {
-        id: `lodging-real-${i}-${Date.now()}`,
-        name: name,
-        lat: coords[1],
-        lng: coords[0],
-        pricePerNight: price,
-        rating: parseFloat(rating),
-        reviewCount: reviews,
-        amenities: amenities,
-        avgCommuteMinutes: Math.floor(5 + Math.random() * 15),
-        rationale: `Real lodging matching your geographic route. Located in close proximity to major stops in this area.`
-      };
-    });
-
+    const formattedLodgings = generateMockLodgings(lat, lng);
     poiCache.set(cacheKey, formattedLodgings);
     return res.status(200).json(formattedLodgings);
 

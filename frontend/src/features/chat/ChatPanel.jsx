@@ -11,11 +11,45 @@ const PRESET_QUICK_REPLIES = [
   { text: 'Suggest cheaper lodging', icon: '🏠' },
 ];
 
+const INTERVIEW_FLOW = [
+  {
+    ai: "Great choice! How many days are you planning for?",
+    chips: ["3–4 days", "5–7 days", "8–10 days", "2+ weeks"],
+    key: "duration"
+  },
+  {
+    ai: "What's your daily budget? Include lodging, food, and activities.",
+    chips: ["$30–50 (budget)", "$50–80 (moderate)", "$80–120 (comfort)", "$120+ (luxury)"],
+    key: "budget"
+  },
+  {
+    ai: "What's your travel pace?",
+    chips: ["Relaxed — 2–3 stops/day", "Balanced — 3–4 stops/day", "Packed — 5+ stops/day"],
+    key: "pace"
+  },
+  {
+    ai: "Who's traveling with you?",
+    chips: ["Solo", "Partner", "Family with kids", "Group of friends"],
+    key: "party"
+  },
+  {
+    ai: "Any dietary preferences? This helps me pick the right food spots.",
+    chips: ["No restrictions", "Vegetarian", "Vegan", "Halal", "Gluten-free"],
+    key: "diet"
+  },
+  {
+    ai: "Last one — what matters most on this trip?",
+    chips: ["Food & local culture", "History & museums", "Nature & outdoor", "Nightlife & entertainment", "Photography spots"],
+    key: "priority"
+  }
+];
+
 export default function ChatPanel() {
   const { state, dispatch } = useTrip();
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef(null);
+  const [isMicRecording, setIsMicRecording] = useState(false);
 
   // Auto-scroll to bottom of messages
   const scrollToBottom = () => {
@@ -24,114 +58,116 @@ export default function ChatPanel() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [state.trip.messages, isTyping]);
+  }, [state.trip.messages, isTyping, isMicRecording]);
+
+  // Main API Caller for Chat
+  const sendMessageToAI = async (updatedMessages, currentTrip) => {
+    setIsTyping(true);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+          currentTrip: currentTrip
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('API server returned an error');
+      }
+
+      const data = await response.json();
+      
+      // Dispatch Assistant Response with sanitized message
+      const sanitizedMessage = (data.message || '').replace(/\*/g, '');
+      dispatch({
+        type: 'ADD_MESSAGE',
+        payload: {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: sanitizedMessage,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+      // Update Itinerary State if returned
+      if (data.trip) {
+        dispatch({ type: 'SET_TRIP', payload: data.trip });
+      } else if (data.mapCenter) {
+        // Only update map center if there's no trip generated/updated,
+        // which helps focus the map on the destination during the interview phase
+        dispatch({ type: 'SET_MAP_CENTER', payload: data.mapCenter });
+      }
+
+      // If Interview complete, turn off interview mode
+      if (data.isComplete) {
+        dispatch({ type: 'SET_INTERVIEW_MODE', payload: false });
+      }
+    } catch (error) {
+      console.error('NIM Chat error:', error);
+      dispatch({
+        type: 'ADD_MESSAGE',
+        payload: {
+          id: `ai-err-${Date.now()}`,
+          role: 'assistant',
+          content: 'Sorry, I couldn\'t connect to the AI planning service. Please check your backend server logs or try again.',
+          timestamp: new Date().toISOString()
+        }
+      });
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  // Watch for entering interview mode with only user's initial prompt
+  useEffect(() => {
+    if (!state.isInterviewMode) return;
+
+    const messages = state.trip?.messages || [];
+    if (messages.length === 1 && messages[0].role === 'user') {
+      sendMessageToAI(messages, null);
+    }
+  }, [state.isInterviewMode, state.trip?.messages?.length]);
+
+  const toggleMic = () => {
+    if (isMicRecording) {
+      setIsMicRecording(false);
+      return;
+    }
+    setIsMicRecording(true);
+    // Simulate speaking for 3 seconds, then submit voice query
+    setTimeout(() => {
+      setIsMicRecording(prev => {
+        if (prev) {
+          handleSendMessage("Suggest cheaper lodging");
+        }
+        return false;
+      });
+    }, 3000);
+  };
 
   const handleSendMessage = (text) => {
     if (!text.trim()) return;
+
+    // Clean user message text of any star signs/asterisks
+    const cleanedText = text.replace(/\*/g, '');
 
     // Append User Message
     const userMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
-      content: text,
+      content: cleanedText,
       timestamp: new Date().toISOString()
     };
     dispatch({ type: 'ADD_MESSAGE', payload: userMessage });
     setInputValue('');
 
-    const lowerText = text.toLowerCase();
-    const isSearch = lowerText.startsWith('/search') || lowerText.startsWith('search ') || lowerText.startsWith('/find') || lowerText.startsWith('find ');
-
-    // Trigger AI response
-    setIsTyping(true);
-
-    if (isSearch) {
-      const searchQuery = text
-        .replace(/^\/(search|find)\s+/i, '')
-        .replace(/^(search|find)\s+/i, '')
-        .trim();
-
-      fetch(`/api/geocode?text=${encodeURIComponent(searchQuery)}`)
-        .then(res => {
-          if (!res.ok) throw new Error('Geocoding service unavailable');
-          return res.json();
-        })
-        .then(data => {
-          setIsTyping(false);
-          if (data.features && data.features.length > 0) {
-            const feature = data.features[0];
-            const [lng, lat] = feature.geometry.coordinates;
-            const label = feature.properties.label;
-
-            // Dispatch map pan event to center the map live
-            window.dispatchEvent(new CustomEvent('map-pan-to', { detail: { lat, lng } }));
-
-            dispatch({
-              type: 'ADD_MESSAGE',
-              payload: {
-                id: `ai-${Date.now()}`,
-                role: 'assistant',
-                content: `I found **${label}** at coordinates \`[${lat.toFixed(4)}, ${lng.toFixed(4)}]\` and centered the map on it!`,
-                timestamp: new Date().toISOString()
-              }
-            });
-          } else {
-            dispatch({
-              type: 'ADD_MESSAGE',
-              payload: {
-                id: `ai-${Date.now()}`,
-                role: 'assistant',
-                content: `Sorry, I couldn't find any location matches for "${searchQuery}". Could you try being more specific?`,
-                timestamp: new Date().toISOString()
-              }
-            });
-          }
-        })
-        .catch(err => {
-          console.error('Geocoding chat error:', err);
-          setIsTyping(false);
-          dispatch({
-            type: 'ADD_MESSAGE',
-            payload: {
-              id: `ai-${Date.now()}`,
-              role: 'assistant',
-              content: `Sorry, I ran into an error searching for "${searchQuery}". Please check your connection or try again.`,
-              timestamp: new Date().toISOString()
-            }
-          });
-        });
-      return;
-    }
-
-    setTimeout(() => {
-      let aiText = "I've processed your edit request. The itinerary has been updated — check the map for the optimized route. How else can I refine your trip?";
-      
-      if (lowerText.includes('cheaper') || lowerText.includes('lodging') || lowerText.includes('budget') || lowerText.includes('homestay') || lowerText.includes('hotel') || lowerText.includes('hostel')) {
-        // Toggle homestays overlay visible
-        if (!state.showHomestays) {
-          dispatch({ type: 'TOGGLE_HOMESTAYS' });
-        }
-        aiText = "I've toggled the **Homestays** overlay on the map so you can view all lodging options in the area! You will see house markers plotted on the map. I recommend 'Asakusa Zen Ryokan' (¥6,200/night) as it is the most budget-friendly option and has the lowest average travel time to your itinerary stops.";
-      } else if (lowerText.includes('museum') || lowerText.includes('day 3')) {
-        aiText = "Day 3 already features teamLab Planets TOKYO, a world-class digital art museum! If you'd like to swap Odaiba Seaside Park for another museum, like the Mori Art Museum in Roppongi, just let me know and I'll re-optimize the route.";
-      } else if (lowerText.includes('relaxed') || lowerText.includes('pace')) {
-        aiText = "I've adjusted the pace for a more relaxed experience. I recommend extending the duration at each stop on Day 2 and removing Takeshita Street to allow for a slower, more meditative experience at Meiji Shrine. The map has been updated.";
-      } else if (lowerText.includes('re-optimize') || lowerText.includes('optimize')) {
-        aiText = "Routes recalculated! I've minimized transit time by reordering stops based on geographic proximity. Day 1 is now perfectly aligned: Senso-ji → Nakamise → Tokyo Skytree for maximum walkability.";
-      } else if (lowerText.includes('packed') || lowerText.includes('adventurous')) {
-        aiText = "I've packed your schedule with maximum experiences! Each day now has 4-5 stops with tight transit windows. I've also added some hidden local gems that most tourists miss.";
-      }
-
-      const aiMessage = {
-        id: `ai-${Date.now()}`,
-        role: 'assistant',
-        content: aiText,
-        timestamp: new Date().toISOString()
-      };
-      
-      dispatch({ type: 'ADD_MESSAGE', payload: aiMessage });
-      setIsTyping(false);
-    }, 2000);
+    // Send history + new message to AI
+    const updatedMessages = [...(state.trip?.messages || []), userMessage];
+    sendMessageToAI(updatedMessages, state.trip);
   };
 
   return (
@@ -194,7 +230,7 @@ export default function ChatPanel() {
 
       {/* Messages List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {state.trip.messages.map((msg, idx) => {
+        {(state.trip?.messages || []).map((msg, idx) => {
           const isUser = msg.role === 'user';
           return (
             <div
@@ -209,25 +245,26 @@ export default function ChatPanel() {
                 </span>
               )}
               <div
-                className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-relaxed`}
+                className="max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-relaxed"
+                dangerouslySetInnerHTML={{ __html: msg.content }}
                 style={
                   isUser
                     ? {
                         background: 'var(--accent-dim)',
                         border: '1px solid var(--accent-border)',
                         color: 'var(--accent)',
-                        borderRadius: '12px 12px 2px 12px'
+                        borderRadius: '12px 12px 2px 12px',
+                        whiteSpace: 'pre-wrap'
                       }
                     : {
                         background: 'var(--surface-2)',
                         border: '1px solid var(--border)',
                         color: 'var(--text)',
-                        borderRadius: '12px 12px 12px 2px'
+                        borderRadius: '12px 12px 12px 2px',
+                        whiteSpace: 'pre-wrap'
                       }
                 }
-              >
-                {msg.content}
-              </div>
+              />
               <span className="text-[8px] mt-1 px-1 font-mono" style={{ color: 'var(--muted)' }}>
                 {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
@@ -258,15 +295,26 @@ export default function ChatPanel() {
                 <span className="text-[9px] font-mono" style={{ color: 'var(--muted)' }}>Planning route...</span>
               </div>
               <div className="space-y-1.5">
-                <div className="h-2 w-full shimmer rounded"></div>
-                <div className="h-2 w-3/4 shimmer rounded"></div>
-                <div className="h-2 w-1/2 shimmer rounded"></div>
+                <div className="h-2 w-full shimmer rounded animate-pulse bg-white/[0.05]"></div>
+                <div className="h-2 w-3/4 shimmer rounded animate-pulse bg-white/[0.05]"></div>
+                <div className="h-2 w-1/2 shimmer rounded animate-pulse bg-white/[0.05]"></div>
               </div>
             </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Mic Recording Overlay */}
+      {isMicRecording && (
+        <div className="px-4 py-2 bg-rose-500/10 border-t border-rose-500/20 text-[10px] text-rose-500 flex items-center justify-between animate-pulse">
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+            <span>Listening... say "Suggest cheaper lodging"</span>
+          </div>
+          <button onClick={() => setIsMicRecording(false)} className="hover:underline font-bold">Cancel</button>
+        </div>
+      )}
 
       {/* Quick Reply Chips */}
       <div
@@ -276,7 +324,17 @@ export default function ChatPanel() {
           borderTop: '1px solid var(--border)'
         }}
       >
-        {PRESET_QUICK_REPLIES.map((reply, idx) => (
+        {(state.isInterviewMode
+          ? [
+              { text: '3 days', icon: '📅' },
+              { text: '5 days', icon: '📅' },
+              { text: 'Relaxed pace', icon: '🧘' },
+              { text: 'Adventure focused', icon: '⚡' },
+              { text: 'Budget friendly', icon: '💰' },
+              { text: 'Kyoto Sightseeing', icon: '⛩️' }
+            ]
+          : PRESET_QUICK_REPLIES
+        ).map((reply, idx) => (
           <button
             key={idx}
             onClick={() => handleSendMessage(reply.text)}
@@ -318,7 +376,7 @@ export default function ChatPanel() {
             type="text"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Ask AI to edit or optimize..."
+            placeholder={state.isInterviewMode ? "Type your answer..." : "Ask AI to edit or optimize..."}
             className="w-full pl-3.5 pr-9 py-2.5 rounded-xl text-xs focus:outline-none placeholder-muted/50 font-sans"
             style={{
               background: 'var(--surface-2)',
@@ -328,8 +386,10 @@ export default function ChatPanel() {
           />
           <button
             type="button"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors cursor-pointer"
-            style={{ color: 'var(--muted)' }}
+            onClick={toggleMic}
+            className={`absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors cursor-pointer p-1 rounded ${
+              isMicRecording ? 'text-rose-500 animate-pulse bg-rose-500/10' : 'text-muted hover:text-text'
+            }`}
             title="Voice input"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

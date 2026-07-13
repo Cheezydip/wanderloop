@@ -13,6 +13,36 @@ const BOUNDS = { minLat: 35.61, maxLat: 35.73, minLng: 139.68, maxLng: 139.83 };
 const SVG_W = 500;
 const SVG_H = 400;
 
+const getCartoStyle = (theme) => {
+  const isLight = theme === 'sunset';
+  const styleType = isLight ? 'light_all' : 'dark_all';
+  return {
+    version: 8,
+    sources: {
+      'carto-raster-tiles': {
+        type: 'raster',
+        tiles: [
+          `https://a.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`,
+          `https://b.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`,
+          `https://c.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`,
+          `https://d.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`
+        ],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors, © CARTO'
+      }
+    },
+    layers: [
+      {
+        id: 'carto-raster-layer',
+        type: 'raster',
+        source: 'carto-raster-tiles',
+        minzoom: 0,
+        maxzoom: 20
+      }
+    ]
+  };
+};
+
 export default function MapPanel() {
   const { state, dispatch } = useTrip();
   const { theme } = useTheme();
@@ -28,10 +58,12 @@ export default function MapPanel() {
   const routesData = state.routesData;
   const [closedPopupStopId, setClosedPopupStopId] = useState(null);
   const [closedPopupHomestayId, setClosedPopupHomestayId] = useState(null);
+  const [activePoiOnMap, setActivePoiOnMap] = useState(null);
 
   // Reset closed popup states when selections change
   useEffect(() => {
     setClosedPopupStopId(null);
+    setActivePoiOnMap(null);
   }, [state.activeStopId]);
 
   useEffect(() => {
@@ -50,8 +82,12 @@ export default function MapPanel() {
 
   // Handle stop click on the map
   const handleMapStopClick = useCallback((stopId) => {
-    dispatch({ type: 'SELECT_STOP', payload: state.activeStopId === stopId ? null : stopId });
-  }, [state.activeStopId, dispatch]);
+    if (state.activeStopId === stopId && closedPopupStopId === stopId) {
+      setClosedPopupStopId(null);
+    } else {
+      dispatch({ type: 'SELECT_STOP', payload: state.activeStopId === stopId ? null : stopId });
+    }
+  }, [state.activeStopId, closedPopupStopId, dispatch]);
 
   const handleMapStopHover = useCallback((stopId) => {
     dispatch({ type: 'HOVER_STOP', payload: stopId });
@@ -59,16 +95,20 @@ export default function MapPanel() {
 
   // Handle homestay click on the map
   const handleMapHomestayClick = useCallback((homestayId) => {
-    const nextId = state.selectedHomestayId === homestayId ? null : homestayId;
-    dispatch({
-      type: 'SELECT_HOMESTAY',
-      payload: nextId,
-    });
-    dispatch({
-      type: 'SELECT_HOMESTAY_ON_MAP',
-      payload: state.activeHomestayOnMapId === homestayId ? null : homestayId,
-    });
-  }, [state.selectedHomestayId, state.activeHomestayOnMapId, dispatch]);
+    if (state.activeHomestayOnMapId === homestayId && closedPopupHomestayId === homestayId) {
+      setClosedPopupHomestayId(null);
+    } else {
+      const nextId = state.selectedHomestayId === homestayId ? null : homestayId;
+      dispatch({
+        type: 'SELECT_HOMESTAY',
+        payload: nextId,
+      });
+      dispatch({
+        type: 'SELECT_HOMESTAY_ON_MAP',
+        payload: state.activeHomestayOnMapId === homestayId ? null : homestayId,
+      });
+    }
+  }, [state.selectedHomestayId, state.activeHomestayOnMapId, closedPopupHomestayId, dispatch]);
 
   // Toggle AI chat panel visibility
   const handleToggleChat = useCallback(() => {
@@ -410,19 +450,25 @@ export default function MapPanel() {
     if (useMockMap || !mapContainerRef.current) return;
 
     try {
-      const initialStyleUrl = theme === 'sunset'
-        ? 'https://tiles.openfreemap.org/styles/positron'
-        : 'https://tiles.openfreemap.org/styles/dark';
-
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: initialStyleUrl,
+        style: getCartoStyle(theme),
         center: [139.75, 35.68],
         zoom: 11,
         attributionControl: false,
       });
 
       mapRef.current = map;
+
+      // Handle dynamic resizing (e.g. ChatPanel width transitions or window resizes)
+      const resizeObserver = new ResizeObserver(() => {
+        if (mapRef.current) {
+          mapRef.current.resize();
+        }
+      });
+      if (mapContainerRef.current) {
+        resizeObserver.observe(mapContainerRef.current);
+      }
 
       map.on('error', (e) => {
         console.error('MapLibre error:', e);
@@ -436,12 +482,12 @@ export default function MapPanel() {
       };
       map.on('click', onMapClick);
 
-      const onMapIdle = () => {
+      const onStyleLoad = () => {
         if (syncMapDataRef.current) {
           syncMapDataRef.current();
         }
       };
-      map.on('idle', onMapIdle);
+      map.on('style.load', onStyleLoad);
 
       const onMapLoad = () => {
         if (syncMapDataRef.current) {
@@ -451,8 +497,9 @@ export default function MapPanel() {
       map.on('load', onMapLoad);
 
       return () => {
+        resizeObserver.disconnect();
         map.off('click', onMapClick);
-        map.off('idle', onMapIdle);
+        map.off('style.load', onStyleLoad);
         map.off('load', onMapLoad);
         map.remove();
       };
@@ -465,11 +512,8 @@ export default function MapPanel() {
   // Update map style dynamically on theme changes
   useEffect(() => {
     if (mapRef.current && !useMockMap) {
-      const styleUrl = theme === 'sunset'
-        ? 'https://tiles.openfreemap.org/styles/positron'
-        : 'https://tiles.openfreemap.org/styles/dark';
       const map = mapRef.current;
-      map.setStyle(styleUrl);
+      map.setStyle(getCartoStyle(theme));
       // After setStyle, all sources/layers are wiped. Force re-sync by
       // updating routesData identity so the syncMapData effect re-fires.
       map.once('styledata', () => {
@@ -501,7 +545,34 @@ export default function MapPanel() {
     return () => {
       map.off('load', fitOnLoad);
     };
-  }, [state.trip?.id, mapLayer, useMockMap, fitTripBounds, state.activeStopId, state.activeHomestayOnMapId, state.selectedHomestayId]);
+  }, [state.trip, mapLayer, useMockMap, fitTripBounds, state.activeStopId, state.activeHomestayOnMapId, state.selectedHomestayId]);
+
+  // Handle AI-triggered map center changes
+  useEffect(() => {
+    if (!state.mapCenter) return;
+    const { lat, lng, zoom } = state.mapCenter;
+    
+    if (useMockMap) {
+      const { x, y } = mapCoordsToSvg(lat, lng);
+      // For mock map, adjust viewBox center based on zoom
+      const factor = zoom ? Math.pow(1.5, zoom - 11) : 1;
+      const zW = SVG_W / factor;
+      const zH = SVG_H / factor;
+      setViewBox({
+        x: Math.max(0, Math.min(x - zW / 2, SVG_W - zW)),
+        y: Math.max(0, Math.min(y - zH / 2, SVG_H - zH)),
+        w: zW,
+        h: zH,
+      });
+      setZoomLevel(factor);
+    } else if (mapRef.current) {
+      mapRef.current.easeTo({
+        center: [lng, lat],
+        zoom: zoom || 12,
+        duration: 1000
+      });
+    }
+  }, [state.mapCenter, useMockMap, mapCoordsToSvg]);
 
   // Handle external map panning events (e.g. from geocoding in ChatPanel)
   useEffect(() => {
@@ -531,7 +602,10 @@ export default function MapPanel() {
   useEffect(() => {
     const handleShowPoi = (e) => {
       const poi = e.detail;
-      if (useMockMap) return;
+      if (useMockMap) {
+        setActivePoiOnMap(poi);
+        return;
+      }
       if (mapRef.current) {
         const currentZoom = mapRef.current.getZoom();
         mapRef.current.easeTo({
@@ -816,6 +890,10 @@ export default function MapPanel() {
               e.preventDefault();
               e.stopPropagation();
               setClosedPopupStopId(state.activeStopId);
+              if (popupRef.current) {
+                popupRef.current.remove();
+                popupRef.current = null;
+              }
             };
 
             const closeBtn = popupContent.querySelector('.popup-close-btn');
@@ -920,6 +998,10 @@ export default function MapPanel() {
             e.preventDefault();
             e.stopPropagation();
             setClosedPopupHomestayId(state.activeHomestayOnMapId);
+            if (popupRef.current) {
+              popupRef.current.remove();
+              popupRef.current = null;
+            }
           };
 
           const closeBtn = popupContent.querySelector('.homestay-close-btn');
@@ -978,6 +1060,12 @@ export default function MapPanel() {
 
     if (map && map.isStyleLoaded()) {
       syncMapData();
+    } else if (map) {
+      map.once('styledata', () => {
+        if (mapRef.current) {
+          syncMapData();
+        }
+      });
     }
 
     return () => {
@@ -1229,10 +1317,41 @@ export default function MapPanel() {
                 })}
               </g>
             )}
+
+            {/* POI Overlay — visible if state.nearbyPOIs.length > 0 */}
+            {state.nearbyPOIs.length > 0 && (
+              <g className="fade-in">
+                {state.nearbyPOIs.map((poi) => {
+                  const { x, y } = mapCoordsToSvg(poi.lat, poi.lng);
+                  let icon = '📍';
+                  if (poi.category === 'food') icon = '🍱';
+                  else if (poi.category === 'cafe') icon = '☕';
+                  else if (poi.category === 'sight') icon = '🏛️';
+
+                  return (
+                    <g
+                      key={poi.id}
+                      className="cursor-pointer"
+                      transform={`translate(${x}, ${y})`}
+                      onClick={() => {
+                        dispatch({ type: 'SELECT_STOP', payload: null });
+                        setActivePoiOnMap(poi);
+                      }}
+                    >
+                      <circle r="12" fill="var(--surface)" stroke="var(--border)" strokeWidth="1" />
+                      <text textAnchor="middle" y="3.5" fontSize="8">
+                        {icon}
+                      </text>
+                      <title>{poi.name} — Rating: {poi.rating}★</title>
+                    </g>
+                  );
+                })}
+              </g>
+            )}
           </svg>
 
           {/* ─── Stop Popover (SVG mode) ─── */}
-          {activeStop && useMockMap && (() => {
+          {activeStop && useMockMap && closedPopupStopId !== activeStop.id && (() => {
             const { x, y } = mapCoordsToSvg(activeStop.lat, activeStop.lng);
             const color = getDayColorHex(activeStop.dayColorHue);
             const pctX = ((x - viewBox.x) / viewBox.w) * 100;
@@ -1264,7 +1383,7 @@ export default function MapPanel() {
                       <p className="text-[9px] leading-relaxed" style={{ color: 'var(--muted)' }}>{activeStop.rationale}</p>
                     </div>
                     <button
-                      onClick={() => dispatch({ type: 'SELECT_STOP', payload: null })}
+                      onClick={() => setClosedPopupStopId(activeStop.id)}
                       className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer"
                       style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted)' }}
                     >
@@ -1278,15 +1397,15 @@ export default function MapPanel() {
               </div>
             );
           })()}
- 
+
           {/* ─── Homestay Popover (SVG mode) ─── */}
-          {activeHomestayOnMap && state.showHomestays && useMockMap && (() => {
+          {activeHomestayOnMap && state.showHomestays && useMockMap && closedPopupHomestayId !== activeHomestayOnMap.id && (() => {
             const home = activeHomestayOnMap;
             const { x, y } = mapCoordsToSvg(home.lat, home.lng);
             const pctX = ((x - viewBox.x) / viewBox.w) * 100;
             const pctY = ((y - viewBox.y) / viewBox.h) * 100;
             const isSelected = state.selectedHomestayId === home.id;
-
+ 
             return (
               <div
                 className="absolute z-30 scale-in pointer-events-auto"
@@ -1343,7 +1462,82 @@ export default function MapPanel() {
                       {isSelected ? '✓ Selected as Lodging' : 'Choose This Homestay'}
                     </button>
                     <button
-                      onClick={() => dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null })}
+                      onClick={() => setClosedPopupHomestayId(home.id)}
+                      className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer"
+                      style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted)' }}
+                    >
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div className="w-3 h-3 rotate-45 mx-auto -mt-1.5" style={{ background: 'var(--surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
+              </div>
+            );
+          })()}
+
+          {/* ─── POI Popover (SVG mode) ─── */}
+          {activePoiOnMap && useMockMap && (() => {
+            const poi = activePoiOnMap;
+            const { x, y } = mapCoordsToSvg(poi.lat, poi.lng);
+            const pctX = ((x - viewBox.x) / viewBox.w) * 100;
+            const pctY = ((y - viewBox.y) / viewBox.h) * 100;
+            
+            let icon = '📍';
+            if (poi.category === 'food') icon = '🍱';
+            else if (poi.category === 'cafe') icon = '☕';
+            else if (poi.category === 'sight') icon = '🏛️';
+
+            return (
+              <div
+                className="absolute z-30 scale-in pointer-events-auto"
+                style={{
+                  left: `${Math.min(Math.max(pctX, 15), 75)}%`,
+                  top: `${Math.min(Math.max(pctY - 15, 5), 60)}%`,
+                  transform: 'translate(-50%, -100%)',
+                }}
+              >
+                <div className="rounded-xl overflow-hidden shadow-2xl min-w-[200px] max-w-[260px]" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <div style={{ height: '3px', background: 'var(--accent)' }} />
+                  <div className="p-3.5">
+                    <div className="popup-meta" style={{ fontSize: '11px', fontFamily: 'JetBrains Mono, monospace', color: 'var(--muted)', marginBottom: '4px' }}>
+                      {poi.category} · ★ {poi.rating}
+                    </div>
+                    <h4 className="font-bold text-xs mb-1" style={{ color: 'var(--text)' }}>
+                      {icon} {poi.name}
+                    </h4>
+                    <div className="popup-desc mb-2.5" style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                      {poi.address || poi.vicinity || 'Located nearby this stop.'}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        let targetDayId = 'day-1';
+                        if (state.activeStopId) {
+                          const activeDay = state.trip.days.find(d => d.stops.some(s => s.id === state.activeStopId));
+                          if (activeDay) targetDayId = activeDay.id;
+                        }
+                        const newStop = {
+                          id: `stop-poi-${Date.now()}`,
+                          name: poi.name,
+                          lat: poi.lat,
+                          lng: poi.lng,
+                          timeEstimate: '01:00 PM - 02:00 PM',
+                          costEstimate: 0,
+                          rationale: `Added from nearby recommendations. Rated ${poi.rating} stars.`,
+                        };
+                        dispatch({ type: 'ADD_STOP', payload: { dayId: targetDayId, stop: newStop } });
+                        dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
+                        dispatch({ type: 'SELECT_STOP', payload: newStop.id });
+                        setActivePoiOnMap(null);
+                      }}
+                      className="w-full py-2 bg-accent text-bg rounded-lg text-[10px] font-bold cursor-pointer"
+                    >
+                      ➕ Add to Itinerary
+                    </button>
+                    <button
+                      onClick={() => setActivePoiOnMap(null)}
                       className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer"
                       style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted)' }}
                     >

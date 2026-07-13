@@ -21,51 +21,7 @@ router.get('/poi', async (req, res) => {
       return res.status(200).json(cachedData);
     }
 
-    const categories = ['restaurant', 'cafe', 'tourism'];
-    // Bounding box: ~1km around the stop
-    const delta = (radius / 1000) * 0.009; // ~0.009 deg per km
-    const viewbox = `${lng - delta},${lat + delta},${lng + delta},${lat - delta}`;
-
-    const fetchPromises = categories.map(async (cat) => {
-      const url = `https://nominatim.openstreetmap.org/search?q=${cat}&format=geojson&viewbox=${viewbox}&bounded=1&limit=5`;
-      try {
-        const response = await fetch(url, {
-          headers: {
-            'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
-          }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          return (data.features || []).map(f => ({
-            feature: f,
-            category: cat === 'tourism' ? 'sight' : cat === 'restaurant' ? 'food' : 'cafe'
-          }));
-        }
-      } catch (err) {
-        console.error(`Failed to fetch Nominatim POI for ${cat}:`, err);
-      }
-      return [];
-    });
-
-    const results = await Promise.all(fetchPromises);
-    const combinedFeatures = results.flat();
-
-    const formattedPOIs = combinedFeatures.map((item, idx) => {
-      const f = item.feature;
-      const coords = f.geometry.coordinates;
-      const name = f.properties.name || f.properties.display_name.split(',')[0] || `Place #${idx + 1}`;
-      return {
-        id: `poi-real-${idx}-${Date.now()}`,
-        name: name,
-        lat: coords[1],
-        lng: coords[0],
-        category: item.category,
-        rating: (4.0 + Math.random() * 0.9).toFixed(1),
-        reviewsCount: Math.floor(10 + Math.random() * 450),
-        address: f.properties.display_name.split(',').slice(1, 3).join(',').trim() || 'Near Stop'
-      };
-    });
-
+    const formattedPOIs = generateMockPOIs(lat, lng);
     poiCache.set(cacheKey, formattedPOIs);
     return res.status(200).json(formattedPOIs);
 
