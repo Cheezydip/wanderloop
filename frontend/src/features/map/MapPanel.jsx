@@ -64,10 +64,19 @@ export default function MapPanel() {
   useEffect(() => {
     setClosedPopupStopId(null);
     setActivePoiOnMap(null);
+    activePOIPopupRef.current = false;
+    if (popupRef.current) {
+      popupRef.current.remove();
+      popupRef.current = null;
+    }
   }, [state.activeStopId]);
 
   useEffect(() => {
     setClosedPopupHomestayId(null);
+    if (popupRef.current) {
+      popupRef.current.remove();
+      popupRef.current = null;
+    }
   }, [state.activeHomestayOnMapId]);
   // Using state.nearbyPOIs from global context
 
@@ -133,17 +142,15 @@ export default function MapPanel() {
 
   // Compute which homestays should be visible based on the active day context
   const visibleHomestays = useMemo(() => {
-    // Determine which day to filter by: explicit highlight takes priority,
-    // then fall back to the day of the currently selected stop
     let filterDayId = highlightedDayId;
-    if (!filterDayId && state.activeStopId) {
-      const dayOfStop = state.trip.days.find(d => d.stops.some(s => s.id === state.activeStopId));
+    if (!filterDayId && state.activeStopId && state.trip?.days) {
+      const dayOfStop = state.trip.days.find(d => d.stops?.some(s => s.id === state.activeStopId));
       if (dayOfStop) filterDayId = dayOfStop.id;
     }
 
     if (!filterDayId) return []; // no day selected → hide all homestays
 
-    const day = state.trip.days.find(d => d.id === filterDayId);
+    const day = state.trip?.days?.find(d => d.id === filterDayId);
     if (!day || !day.stops || day.stops.length === 0) return state.homestays;
 
     return state.homestays.filter(h =>
@@ -194,20 +201,20 @@ export default function MapPanel() {
 
   // Find the active stop data
   const activeStop = useMemo(() => {
-    if (!state.activeStopId) return null;
+    if (!state.activeStopId || !state.trip?.days) return null;
     for (const day of state.trip.days) {
-      const stop = day.stops.find(s => s.id === state.activeStopId);
+      const stop = day.stops?.find(s => s.id === state.activeStopId);
       if (stop) return { ...stop, dayColorHue: day.colorHue, dayId: day.id };
     }
     return null;
-  }, [state.activeStopId, state.trip.days]);
+  }, [state.activeStopId, state.trip?.days]);
 
   // Pan map to active stop — fit the whole active day in view
   useEffect(() => {
     if (!activeStop) return;
     if (useMockMap) {
       // Find the day this stop belongs to
-      const activeDay = state.trip.days.find(d => d.stops.some(s => s.id === activeStop.id));
+      const activeDay = state.trip?.days?.find(d => d.stops?.some(s => s.id === activeStop.id));
 
       if (activeDay && activeDay.stops.length > 1) {
         const xs = activeDay.stops.map(s => mapCoordsToSvg(s.lat, s.lng).x);
@@ -245,7 +252,7 @@ export default function MapPanel() {
         duration: 800
       });
     }
-  }, [activeStop, useMockMap, mapCoordsToSvg, state.trip.days]);
+  }, [activeStop, useMockMap, mapCoordsToSvg, state.trip?.days]);
 
   // Pan map to active homestay on map
   useEffect(() => {
@@ -317,8 +324,8 @@ export default function MapPanel() {
     
     let allCoordinates = [];
     if (mapLayer === 'stops') {
-      state.trip.days.forEach(day => {
-        day.stops.forEach(s => {
+      state.trip?.days?.forEach(day => {
+        day.stops?.forEach(s => {
           allCoordinates.push([s.lng, s.lat]);
         });
       });
@@ -353,20 +360,20 @@ export default function MapPanel() {
 
   // Compute center of gravity for a day's stops
   const getDayCog = useCallback((dayId) => {
-    const day = state.trip.days.find(d => d.id === dayId);
-    if (!day || day.stops.length === 0) return null;
+    const day = state.trip?.days?.find(d => d.id === dayId);
+    if (!day || !day.stops || day.stops.length === 0) return null;
     const avgLat = day.stops.reduce((s, st) => s + st.lat, 0) / day.stops.length;
     const avgLng = day.stops.reduce((s, st) => s + st.lng, 0) / day.stops.length;
     return mapCoordsToSvg(avgLat, avgLng);
-  }, [state.trip.days, mapCoordsToSvg]);
+  }, [state.trip?.days, mapCoordsToSvg]);
 
   const getDayCogLatLng = useCallback((dayId) => {
-    const day = state.trip.days.find(d => d.id === dayId);
-    if (!day || day.stops.length === 0) return null;
+    const day = state.trip?.days?.find(d => d.id === dayId);
+    if (!day || !day.stops || day.stops.length === 0) return null;
     const avgLat = day.stops.reduce((s, st) => s + st.lat, 0) / day.stops.length;
     const avgLng = day.stops.reduce((s, st) => s + st.lng, 0) / day.stops.length;
     return [avgLng, avgLat];
-  }, [state.trip.days]);
+  }, [state.trip?.days]);
 
   // Legend click handler
   const handleLegendClick = useCallback((dayId) => {
@@ -403,9 +410,9 @@ export default function MapPanel() {
 
   // Fetch nearby POIs automatically when activeStop changes
   useEffect(() => {
-    if (state.activeStopId) {
+    if (state.activeStopId && state.trip?.days) {
       const stop = state.trip.days
-        .flatMap(d => d.stops)
+        .flatMap(d => d.stops || [])
         .find(s => s.id === state.activeStopId);
       if (stop) {
         handleShowNearbyPlaces(stop);
@@ -413,7 +420,7 @@ export default function MapPanel() {
     } else {
       dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
     }
-  }, [state.activeStopId, state.trip.days, handleShowNearbyPlaces, dispatch]);
+  }, [state.activeStopId, state.trip?.days, handleShowNearbyPlaces, dispatch]);
 
   // Fetch real routes from OSRM whenever stops or day configuration changes
   useEffect(() => {
@@ -427,7 +434,17 @@ export default function MapPanel() {
         return;
       }
 
-      const currentCoords = day.stops.map(s => [s.lng, s.lat]);
+      const currentCoords = day.stops
+        .filter(s => s && s.lng !== null && s.lng !== undefined && s.lat !== null && s.lat !== undefined && !isNaN(parseFloat(s.lng)) && !isNaN(parseFloat(s.lat)))
+        .map(s => [parseFloat(s.lng), parseFloat(s.lat)]);
+
+      if (currentCoords.length < 2) {
+        if (state.routesData[day.id]) {
+          dispatch({ type: 'SET_ROUTE_DATA', payload: { dayId: day.id, routeData: null } });
+        }
+        return;
+      }
+
       const existingRoute = state.routesData[day.id];
       if (existingRoute && existingRoute.coordinatesKey === JSON.stringify(currentCoords)) {
         return;
@@ -708,16 +725,21 @@ export default function MapPanel() {
           popupRef.current = null;
         }
 
-        state.trip.days.forEach(day => {
-          const layerId = `route-day-${day.id}`;
-          const sourceId = `route-source-day-${day.id}`;
-          if (map.getLayer(layerId)) map.removeLayer(layerId);
-          if (map.getSource(sourceId)) map.removeSource(sourceId);
-          
-          const commuteLayerId = `commute-day-${day.id}`;
-          const commuteSourceId = `commute-source-day-${day.id}`;
-          if (map.getLayer(commuteLayerId)) map.removeLayer(commuteLayerId);
-          if (map.getSource(commuteSourceId)) map.removeSource(commuteSourceId);
+        // Clean up any old day layers that are no longer in the trip days
+        const activeDayIds = new Set((state.trip?.days || []).map(d => d.id));
+        const oldDayIds = ['day-1', 'day-2', 'day-3', 'day-4', 'day-5', 'day-6', 'day-7'];
+        oldDayIds.forEach(id => {
+          if (!activeDayIds.has(id)) {
+            const layerId = `route-day-${id}`;
+            const sourceId = `route-source-day-${id}`;
+            if (map.getLayer(layerId)) map.removeLayer(layerId);
+            if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+            const commuteLayerId = `commute-day-${id}`;
+            const commuteSourceId = `commute-source-day-${id}`;
+            if (map.getLayer(commuteLayerId)) map.removeLayer(commuteLayerId);
+            if (map.getSource(commuteSourceId)) map.removeSource(commuteSourceId);
+          }
         });
 
         // Always render routes and stops
@@ -737,8 +759,6 @@ export default function MapPanel() {
             };
           }
 
-          if (!routeGeoJSON) return;
-
           const sourceId = `route-source-day-${day.id}`;
           const layerId = `route-day-${day.id}`;
           const color = getDayColorHex(day.colorHue);
@@ -747,26 +767,120 @@ export default function MapPanel() {
           const lineWidth = active ? 5 : 2;
           const lineOpacity = active ? 0.95 : 0.15;
 
-          map.addSource(sourceId, {
-            type: 'geojson',
-            data: routeGeoJSON
-          });
+          if (!routeGeoJSON) {
+            if (map.getLayer(layerId)) map.removeLayer(layerId);
+            if (map.getSource(sourceId)) map.removeSource(sourceId);
+            return;
+          }
 
-          map.addLayer({
-            id: layerId,
-            type: 'line',
-            source: sourceId,
-            layout: {
-              'line-join': 'round',
-              'line-cap': 'round'
-            },
-            paint: {
-              'line-color': color,
-              'line-width': lineWidth,
-              'line-opacity': lineOpacity
+          const source = map.getSource(sourceId);
+          if (source) {
+            source.setData(routeGeoJSON);
+            if (map.getLayer(layerId)) {
+              map.setPaintProperty(layerId, 'line-color', color);
+              map.setPaintProperty(layerId, 'line-width', lineWidth);
+              map.setPaintProperty(layerId, 'line-opacity', lineOpacity);
+            }
+          } else {
+            map.addSource(sourceId, {
+              type: 'geojson',
+              data: routeGeoJSON
+            });
+
+            map.addLayer({
+              id: layerId,
+              type: 'line',
+              source: sourceId,
+              layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+              },
+              paint: {
+                'line-color': color,
+                'line-width': lineWidth,
+                'line-opacity': lineOpacity
+              }
+            });
+          }
+        });
+
+        // Dotted commute lines from hovered/selected homestay to all active day stops on the live map
+        let filterDayId = highlightedDayId;
+        if (!filterDayId && state.activeStopId && state.trip?.days) {
+          const dayOfStop = state.trip.days.find(d => d.stops?.some(s => s.id === state.activeStopId));
+          if (dayOfStop) filterDayId = dayOfStop.id;
+        }
+        const activeDay = state.trip?.days?.find(d => d.id === filterDayId) || state.trip?.days?.[0];
+
+        if (state.showHomestays && activeHomestay && activeDay && activeDay.stops && activeDay.stops.length > 0) {
+          const commuteFeatures = activeDay.stops.map(stop => ({
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'LineString',
+              coordinates: [
+                [activeHomestay.lng, activeHomestay.lat],
+                [stop.lng, stop.lat]
+              ]
+            }
+          }));
+
+          const commuteGeoJSON = {
+            type: 'FeatureCollection',
+            features: commuteFeatures
+          };
+
+          const commuteSourceId = `commute-source-day-${activeDay.id}`;
+          const commuteLayerId = `commute-day-${activeDay.id}`;
+
+          // Remove commute layers/sources for other days first
+          state.trip.days.forEach(day => {
+            if (day.id !== activeDay.id) {
+              const otherLayerId = `commute-day-${day.id}`;
+              const otherSourceId = `commute-source-day-${day.id}`;
+              if (map.getLayer(otherLayerId)) map.removeLayer(otherLayerId);
+              if (map.getSource(otherSourceId)) map.removeSource(otherSourceId);
             }
           });
-        });
+
+          const commuteSource = map.getSource(commuteSourceId);
+          if (commuteSource) {
+            commuteSource.setData(commuteGeoJSON);
+            if (map.getLayer(commuteLayerId)) {
+              map.setPaintProperty(commuteLayerId, 'line-color', '#f59e0b');
+              map.setPaintProperty(commuteLayerId, 'line-opacity', 0.8);
+            }
+          } else {
+            map.addSource(commuteSourceId, {
+              type: 'geojson',
+              data: commuteGeoJSON
+            });
+
+            map.addLayer({
+              id: commuteLayerId,
+              type: 'line',
+              source: commuteSourceId,
+              layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+              },
+              paint: {
+                'line-color': '#f59e0b', // Amber/warm color
+                'line-width': 2.5,
+                'line-opacity': 0.8,
+                'line-dasharray': [2, 3] // Dotted line style
+              }
+            });
+          }
+        } else {
+          // Remove commute layers for all days
+          state.trip.days.forEach(day => {
+            const commuteLayerId = `commute-day-${day.id}`;
+            const commuteSourceId = `commute-source-day-${day.id}`;
+            if (map.getLayer(commuteLayerId)) map.removeLayer(commuteLayerId);
+            if (map.getSource(commuteSourceId)) map.removeSource(commuteSourceId);
+          });
+        }
 
         state.trip.days.forEach((day, dayIdx) => {
           const isActiveDayForMarkers = !highlightedDayId || day.id === highlightedDayId;
@@ -1058,17 +1172,24 @@ export default function MapPanel() {
 
     syncMapDataRef.current = syncMapData;
 
-    if (map && map.isStyleLoaded()) {
-      syncMapData();
-    } else if (map) {
-      map.once('styledata', () => {
-        if (mapRef.current) {
-          syncMapData();
-        }
-      });
+    const handleSync = () => {
+      if (mapRef.current) {
+        syncMapData();
+      }
+    };
+
+    if (map) {
+      if (map.isStyleLoaded()) {
+        syncMapData();
+      } else {
+        map.once('styledata', handleSync);
+      }
     }
 
     return () => {
+      if (map) {
+        map.off('styledata', handleSync);
+      }
       markersRef.current.forEach(m => m.remove());
       markersRef.current = [];
       if (popupRef.current) {

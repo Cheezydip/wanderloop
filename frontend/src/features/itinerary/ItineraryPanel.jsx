@@ -47,7 +47,7 @@ export default function ItineraryPanel() {
   const [isBudgetOpen, setIsBudgetOpen] = useState(false);
 
   const totalSpend = (state.budgetItems || []).reduce((sum, item) => sum + item.amount, 0);
-  const budgetLimit = state.trip.budget || 25000;
+  const budgetLimit = state.trip?.budget || 25000;
   const percentage = Math.min((totalSpend / budgetLimit) * 100, 100);
 
   const ADD_COLORS = ['#2dd4bf', '#f59e0b', '#8b5cf6', '#f43f5e', '#84cc16', '#a78bfa', '#06b6d4', '#ec4899'];
@@ -96,18 +96,18 @@ export default function ItineraryPanel() {
   };
 
   const visibleHomestays = useMemo(() => {
-    if (!expandedDayId) return [];
+    if (!expandedDayId || !state.trip?.days) return [];
     const day = state.trip.days.find(d => d.id === expandedDayId);
     if (!day || !day.stops || day.stops.length === 0) return [];
     return state.homestays.filter(h =>
       day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 5)
     );
-  }, [state.homestays, state.trip.days, expandedDayId]);
+  }, [state.homestays, state.trip?.days, expandedDayId]);
 
   // Scroll active stop into view smoothly
   useEffect(() => {
-    if (state.activeStopId) {
-      const targetDay = state.trip.days.find(d => d.stops.some(s => s.id === state.activeStopId));
+    if (state.activeStopId && state.trip?.days) {
+      const targetDay = state.trip.days.find(d => d.stops?.some(s => s.id === state.activeStopId));
       if (targetDay && expandedDayId !== targetDay.id) {
         setExpandedDayId(targetDay.id);
       }
@@ -120,7 +120,7 @@ export default function ItineraryPanel() {
       }, 150);
       return () => clearTimeout(timer);
     }
-  }, [state.activeStopId]);
+  }, [state.activeStopId, state.trip?.days]);
 
   // Scroll expanded day into view
   useEffect(() => {
@@ -134,12 +134,12 @@ export default function ItineraryPanel() {
 
   // Scroll selected homestay into view
   useEffect(() => {
-    if (state.selectedHomestayId) {
+    if (state.selectedHomestayId && state.trip?.days) {
       // Find the day this homestay belongs to (first day that has a stop within 5km)
       const home = state.homestays.find(h => h.id === state.selectedHomestayId);
       if (home) {
         const targetDay = state.trip.days.find(d =>
-          d.stops.some(stop => haversine(home.lat, home.lng, stop.lat, stop.lng) <= 5)
+          d.stops?.some(stop => haversine(home.lat, home.lng, stop.lat, stop.lng) <= 5)
         );
         if (targetDay && expandedDayId !== targetDay.id) {
           setExpandedDayId(targetDay.id);
@@ -154,7 +154,7 @@ export default function ItineraryPanel() {
       }, 250);
       return () => clearTimeout(timer);
     }
-  }, [state.selectedHomestayId, state.homestays, state.trip.days]);
+  }, [state.selectedHomestayId, state.homestays, state.trip?.days]);
 
   const handleOptimizeStops = async (day) => {
     if (day.stops.length < 3) return;
@@ -223,7 +223,7 @@ export default function ItineraryPanel() {
     dispatch({ type: 'SELECT_STOP', payload: state.activeStopId === stopId ? null : stopId });
   };
 
-  const numDays = state.trip.days.length;
+  const numDays = state.trip?.days?.length || 0;
 
   return (
     <div
@@ -266,7 +266,7 @@ export default function ItineraryPanel() {
             color: 'var(--muted)'
           }}
         >
-          {state.trip.days.reduce((acc, d) => acc + d.stops.length, 0)} Stops · {numDays}D
+          {state.trip?.days?.reduce((acc, d) => acc + (d.stops?.length || 0), 0) || 0} Stops · {numDays}D
         </span>
       </div>
 
@@ -413,17 +413,17 @@ export default function ItineraryPanel() {
           <>
             {/* Day Cards */}
             <div className="space-y-2.5 stagger-children">
-              {state.trip.days.map((day) => {
+              {state.trip?.days?.map((day) => {
                 const isExpanded = expandedDayId === day.id;
                 const colorHex = getDayColorHex(day.colorHue);
 
-                const dayCost = day.stops.reduce((sum, s) => sum + s.costEstimate, 0);
+                const dayCost = day.stops?.reduce((sum, s) => sum + s.costEstimate, 0) || 0;
                 
                 let estCommute = 0;
                 const routeData = state.routesData[day.id];
                 if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.summary) {
                   estCommute = Math.round(routeData.features[0].properties.summary.duration / 60);
-                } else {
+                } else if (day.stops) {
                   let totalHaversineDist = 0;
                   for (let i = 0; i < day.stops.length - 1; i++) {
                     totalHaversineDist += haversine(day.stops[i].lat, day.stops[i].lng, day.stops[i+1].lat, day.stops[i+1].lng);

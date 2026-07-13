@@ -7,7 +7,7 @@ export default function TopBar() {
   const { theme, setTheme } = useTheme();
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false);
   const [isEditingBudget, setIsEditingBudget] = useState(false);
-  const [tempBudget, setTempBudget] = useState(state.trip.budget || 25000);
+  const [tempBudget, setTempBudget] = useState(state.trip?.budget || 25000);
   const [saveText, setSaveText] = useState('Save');
   const budgetRef = useRef(null);
 
@@ -25,11 +25,11 @@ export default function TopBar() {
     };
   }, [showBudgetDropdown]);
 
-  const numDays = state.trip.days.length;
+  const numDays = state.trip?.days?.length || 0;
 
   // Calculate expenses dynamically from global budgetItems state
   const totalSpend = (state.budgetItems || []).reduce((sum, item) => sum + item.amount, 0);
-  const budgetLimit = state.trip.budget || 25000;
+  const budgetLimit = state.trip?.budget || 25000;
   const percentage = Math.min((totalSpend / budgetLimit) * 100, 100);
 
   // Budget status color thresholds (matches wanderloopmap.html exactly: >90% is danger, >70% is warm, else teal)
@@ -121,7 +121,7 @@ export default function TopBar() {
                   strokeLinejoin="round"
                 />
               </svg>
-              {state.trip.title} · {numDays} days
+              {state.trip?.title} · {numDays} days
             </div>
           </>
         )}

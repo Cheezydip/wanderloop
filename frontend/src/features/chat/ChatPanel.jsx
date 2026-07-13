@@ -58,7 +58,7 @@ export default function ChatPanel() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [state.trip.messages, isTyping, isMicRecording]);
+  }, [state.trip?.messages, isTyping, isMicRecording]);
 
   // Main API Caller for Chat
   const sendMessageToAI = async (updatedMessages, currentTrip) => {

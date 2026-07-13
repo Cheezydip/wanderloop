@@ -9,8 +9,8 @@ export const DEFAULT_BUDGET_ITEMS = [
 ];
 
 const initialState = {
-  trip: mockTrip,
-  homestays: mockHomestays,
+  trip: null,
+  homestays: [],
   selectedHomestayId: null,
   hoveredHomestayId: null,
   activeTab: 'map',
@@ -21,11 +21,11 @@ const initialState = {
   activeStopId: null,
   isGenerating: false,
   isInterviewMode: false,
-  hasTrip: true, // false = show Empty State
+  hasTrip: false, // false = show Empty State
   mapLayer: 'stops', // 'stops' | 'homestays'
   activeHomestayOnMapId: null, // for homestay popover on map
   highlightedDayId: null, // for legend-based day filtering
-  showChat: false, // toggled via map control on desktop
+  showChat: true, // toggled via map control on desktop
   showHomestays: true, // toggled via map control
   nearbyPOIs: [], // nearby cafes, restaurants, shops for active stop
   loadingPOIs: false, // loading state for nearby POIs

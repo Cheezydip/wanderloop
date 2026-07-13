@@ -8,12 +8,23 @@ router.post('/route', async (req, res) => {
   try {
     const { coordinates, profile = 'foot-walking' } = req.body || {};
     
-    if (!coordinates || !Array.isArray(coordinates) || coordinates.length < 2) {
-      return res.status(400).json({ error: 'At least 2 coordinates are required' });
+    if (!coordinates || !Array.isArray(coordinates)) {
+      return res.status(400).json({ error: 'Coordinates array is required' });
     }
 
-    // Cache key based on profile + coordinates
-    const cacheKey = `${profile}-${JSON.stringify(coordinates)}`;
+    const validCoordinates = coordinates.filter(c => 
+      Array.isArray(c) && 
+      c.length === 2 && 
+      c[0] !== null && c[0] !== undefined && !isNaN(parseFloat(c[0])) &&
+      c[1] !== null && c[1] !== undefined && !isNaN(parseFloat(c[1]))
+    ).map(c => [parseFloat(c[0]), parseFloat(c[1])]);
+
+    if (validCoordinates.length < 2) {
+      return res.status(400).json({ error: 'At least 2 valid coordinates are required' });
+    }
+
+    // Cache key based on profile + validCoordinates
+    const cacheKey = `${profile}-${JSON.stringify(validCoordinates)}`;
     const cachedData = routeCache.get(cacheKey);
     if (cachedData) {
       return res.status(200).json(cachedData);
@@ -21,7 +32,7 @@ router.post('/route', async (req, res) => {
 
     // Map profile to OSRM service type (foot, car, bike)
     const osrmProfile = profile.includes('driving') ? 'car' : profile.includes('cycling') ? 'bicycle' : 'foot';
-    const coordinatesJoined = coordinates.map(c => `${c[0]},${c[1]}`).join(';');
+    const coordinatesJoined = validCoordinates.map(c => `${c[0]},${c[1]}`).join(';');
     const url = `https://router.project-osrm.org/route/v1/${osrmProfile}/${coordinatesJoined}?overview=full&geometries=geojson`;
     
     const response = await fetch(url, {
@@ -75,18 +86,29 @@ router.post('/route/table', async (req, res) => {
   try {
     const { coordinates, profile = 'foot-walking' } = req.body || {};
     
-    if (!coordinates || !Array.isArray(coordinates) || coordinates.length < 2) {
-      return res.status(400).json({ error: 'At least 2 coordinates are required' });
+    if (!coordinates || !Array.isArray(coordinates)) {
+      return res.status(400).json({ error: 'Coordinates array is required' });
     }
 
-    const cacheKey = `${profile}-${JSON.stringify(coordinates)}`;
+    const validCoordinates = coordinates.filter(c => 
+      Array.isArray(c) && 
+      c.length === 2 && 
+      c[0] !== null && c[0] !== undefined && !isNaN(parseFloat(c[0])) &&
+      c[1] !== null && c[1] !== undefined && !isNaN(parseFloat(c[1]))
+    ).map(c => [parseFloat(c[0]), parseFloat(c[1])]);
+
+    if (validCoordinates.length < 2) {
+      return res.status(400).json({ error: 'At least 2 valid coordinates are required' });
+    }
+
+    const cacheKey = `${profile}-${JSON.stringify(validCoordinates)}`;
     const cachedData = tableCache.get(cacheKey);
     if (cachedData) {
       return res.status(200).json(cachedData);
     }
 
     const osrmProfile = profile.includes('driving') ? 'car' : profile.includes('cycling') ? 'bicycle' : 'foot';
-    const coordinatesJoined = coordinates.map(c => `${c[0]},${c[1]}`).join(';');
+    const coordinatesJoined = validCoordinates.map(c => `${c[0]},${c[1]}`).join(';');
     const url = `https://router.project-osrm.org/table/v1/${osrmProfile}/${coordinatesJoined}?annotations=distance,duration`;
 
     const response = await fetch(url, {
@@ -120,18 +142,29 @@ router.post('/route/optimize', async (req, res) => {
   try {
     const { coordinates, profile = 'foot-walking' } = req.body || {};
     
-    if (!coordinates || !Array.isArray(coordinates) || coordinates.length < 2) {
-      return res.status(400).json({ error: 'At least 2 coordinates are required' });
+    if (!coordinates || !Array.isArray(coordinates)) {
+      return res.status(400).json({ error: 'Coordinates array is required' });
     }
 
-    const cacheKey = `${profile}-${JSON.stringify(coordinates)}`;
+    const validCoordinates = coordinates.filter(c => 
+      Array.isArray(c) && 
+      c.length === 2 && 
+      c[0] !== null && c[0] !== undefined && !isNaN(parseFloat(c[0])) &&
+      c[1] !== null && c[1] !== undefined && !isNaN(parseFloat(c[1]))
+    ).map(c => [parseFloat(c[0]), parseFloat(c[1])]);
+
+    if (validCoordinates.length < 2) {
+      return res.status(400).json({ error: 'At least 2 valid coordinates are required' });
+    }
+
+    const cacheKey = `${profile}-${JSON.stringify(validCoordinates)}`;
     const cachedData = optimizeCache.get(cacheKey);
     if (cachedData) {
       return res.status(200).json(cachedData);
     }
 
     const osrmProfile = profile.includes('driving') ? 'car' : profile.includes('cycling') ? 'bicycle' : 'foot';
-    const coordinatesJoined = coordinates.map(c => `${c[0]},${c[1]}`).join(';');
+    const coordinatesJoined = validCoordinates.map(c => `${c[0]},${c[1]}`).join(';');
     const url = `https://router.project-osrm.org/trip/v1/${osrmProfile}/${coordinatesJoined}?source=first&destination=any&roundtrip=false&geometries=geojson&overview=full`;
 
     const response = await fetch(url, {
