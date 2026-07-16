@@ -4,109 +4,13 @@ import TopBar from './components/TopBar';
 import ChatPanel from './features/chat/ChatPanel';
 import MapPanel from './features/map/MapPanel';
 import ItineraryPanel from './features/itinerary/ItineraryPanel';
-
-/* ─── Empty State: Full-screen landing with glowing search ─── */
-function EmptyState() {
-  const { dispatch } = useTrip();
-  const [inputValue, setInputValue] = useState('');
-
-  const templates = [
-    { text: 'A week in Tokyo for a food lover', icon: '🍱' },
-    { text: '3 days in Kyoto sightseeing', icon: '⛩️' },
-    { text: 'Adventure weekend in Hakone', icon: '🏔️' },
-    { text: '5-day cultural deep dive in Osaka', icon: '🏯' },
-  ];
-
-  const handleSubmit = (prompt) => {
-    const text = prompt || inputValue;
-    if (!text.trim()) return;
-
-    dispatch({ type: 'START_INTERVIEW', payload: text });
-  };
-
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden">
-      {/* Ambient background effects */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(45,212,191,0.06)_0%,transparent_70%)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(45,212,191,0.04)_0%,transparent_50%)]" />
-
-      {/* Subtle grid */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.012)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.012)_1px,transparent_1px)] bg-[size:40px_40px]" />
-
-      <div className="relative z-10 flex flex-col items-center max-w-2xl w-full px-6 scale-in">
-        {/* Logo Mark */}
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-accent to-emerald-400 flex items-center justify-center shadow-xl glow-accent-strong mb-8">
-          <svg className="w-9 h-9 text-bg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        </div>
-
-        {/* Heading */}
-        <h1 className="text-4xl md:text-5xl font-extrabold text-center tracking-tight mb-3">
-          <span className="bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
-            Where to next?
-          </span>
-        </h1>
-        <p className="text-muted text-sm text-center mb-10 max-w-md leading-relaxed">
-          Describe your dream trip and our AI will craft a map-anchored itinerary with optimized routes, curated stops, and smart lodging.
-        </p>
-
-        {/* Search Input with Glow Ring */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSubmit();
-          }}
-          className="w-full max-w-lg mb-8"
-        >
-          <div className="relative ring-pulse rounded-2xl">
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="A week in Tokyo for a food lover..."
-              className="w-full px-6 py-4 rounded-2xl text-sm text-white bg-[rgba(22,29,27,0.8)] border border-white/[0.1] focus:border-accent focus:outline-none placeholder-muted/60 font-sans backdrop-blur-xl transition-all-300"
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={!inputValue.trim()}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl bg-accent text-bg font-bold text-sm shadow-lg shadow-accent/20 disabled:opacity-30 disabled:shadow-none hover:bg-accent/85 transition-all-300 transform active:scale-95 cursor-pointer"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-              </svg>
-            </button>
-          </div>
-        </form>
-
-        {/* Template Chips */}
-        <div className="flex flex-wrap justify-center gap-2.5">
-          {templates.map((tmpl, idx) => (
-            <button
-              key={idx}
-              onClick={() => {
-                setInputValue(tmpl.text);
-                handleSubmit(tmpl.text);
-              }}
-              className="group flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.06] hover:border-accent/30 text-xs text-muted hover:text-white transition-all-300 cursor-pointer"
-              style={{ animationDelay: `${idx * 80}ms` }}
-            >
-              <span className="text-base">{tmpl.icon}</span>
-              <span className="font-medium">{tmpl.text}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+import LandingPage from './features/landing/LandingPage';
 
 export default function App() {
   const { state, dispatch } = useTrip();
   const { activeTab, hasTrip, isInterviewMode } = state;
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
 
   useEffect(() => {
     const handleResize = () => {
@@ -168,13 +72,13 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg text-text">
       {/* Top Bar */}
-      <TopBar />
+      {hasTrip && <TopBar />}
 
       {/* Main Content Area */}
       <main className="flex-1 flex overflow-hidden relative">
         {!hasTrip ? (
-          /* ─── Empty State ─── */
-          <EmptyState />
+          /* ─── Landing Page ─── */
+          <LandingPage />
         ) : isMobile ? (
           /* Mobile View (Tabbed Single Column) */
           <div className="flex flex-1 flex-col overflow-hidden h-full">
