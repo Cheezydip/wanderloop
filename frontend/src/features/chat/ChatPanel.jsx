@@ -63,63 +63,76 @@ export default function ChatPanel() {
   // Main API Caller for Chat
   const sendMessageToAI = async (updatedMessages, currentTrip) => {
     setIsTyping(true);
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
-          currentTrip: currentTrip
-        })
-      });
+    let success = false;
+    let attempt = 0;
 
-      if (!response.ok) {
-        throw new Error('API server returned an error');
-      }
+    while (!success && attempt < 20) {
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+            currentTrip: currentTrip
+          })
+        });
 
-      const data = await response.json();
-      
-      // Dispatch Assistant Response with sanitized message
-      const sanitizedMessage = (data.message || '').replace(/\*/g, '');
-      dispatch({
-        type: 'ADD_MESSAGE',
-        payload: {
-          id: `ai-${Date.now()}`,
-          role: 'assistant',
-          content: sanitizedMessage,
-          timestamp: new Date().toISOString()
+        if (!response.ok) {
+          throw new Error('API server returned an error');
         }
-      });
 
-      // Update Itinerary State if returned
-      if (data.trip) {
-        dispatch({ type: 'SET_TRIP', payload: data.trip });
-      } else if (data.mapCenter) {
-        // Only update map center if there's no trip generated/updated,
-        // which helps focus the map on the destination during the interview phase
-        dispatch({ type: 'SET_MAP_CENTER', payload: data.mapCenter });
-      }
+        const data = await response.json();
+        
+        // Dispatch Assistant Response with sanitized message
+        const sanitizedMessage = (data.message || '').replace(/\*/g, '');
+        dispatch({
+          type: 'ADD_MESSAGE',
+          payload: {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            content: sanitizedMessage,
+            timestamp: new Date().toISOString()
+          }
+        });
 
-      // If Interview complete, turn off interview mode
-      if (data.isComplete) {
-        dispatch({ type: 'SET_INTERVIEW_MODE', payload: false });
-      }
-    } catch (error) {
-      console.error('NIM Chat error:', error);
-      dispatch({
-        type: 'ADD_MESSAGE',
-        payload: {
-          id: `ai-err-${Date.now()}`,
-          role: 'assistant',
-          content: 'Sorry, I couldn\'t connect to the AI planning service. Please check your backend server logs or try again.',
-          timestamp: new Date().toISOString()
+        // Update Itinerary State if returned
+        if (data.trip) {
+          dispatch({ type: 'SET_TRIP', payload: data.trip });
+        } 
+        
+        if (data.mapCenter) {
+          // Update map center to focus exactly on the AI's desired destination
+          dispatch({ type: 'SET_MAP_CENTER', payload: data.mapCenter });
         }
-      });
-    } finally {
-      setIsTyping(false);
+
+        // If Interview complete, turn off interview mode
+        if (data.isComplete) {
+          dispatch({ type: 'SET_INTERVIEW_MODE', payload: false });
+        }
+        
+        success = true;
+      } catch (error) {
+        console.error('NIM Chat error:', error);
+        attempt++;
+        if (attempt >= 20) {
+          dispatch({
+            type: 'ADD_MESSAGE',
+            payload: {
+              id: `ai-err-${Date.now()}`,
+              role: 'assistant',
+              content: 'Sorry, I couldn\'t connect to the AI planning service. Please check your backend server logs or try again.',
+              timestamp: new Date().toISOString()
+            }
+          });
+        } else {
+          // Wait 2 seconds before retrying
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
     }
+    setIsTyping(false);
   };
 
   // Watch for entering interview mode with only user's initial prompt

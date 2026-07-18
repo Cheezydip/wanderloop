@@ -10,7 +10,7 @@ import poiRouter from './routes/poi.js';
 import lodgingRouter from './routes/lodging.js';
 import chatRouter from './routes/chat.js';
 
-// Load environment variables from project root .env
+// Load environment variables from project root .env - triggers watch key reload
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../.env'), override: true });

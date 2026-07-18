@@ -53,6 +53,8 @@ export default function MapPanel() {
   const popupRef = useRef(null);
   const syncMapDataRef = useRef(null);
   const activePOIPopupRef = useRef(false);
+  const homestaysRef = useRef(state.homestays);
+  homestaysRef.current = state.homestays;
 
   const [styleTrigger, setStyleTrigger] = useState(0);
   const routesData = state.routesData;
@@ -148,13 +150,13 @@ export default function MapPanel() {
       if (dayOfStop) filterDayId = dayOfStop.id;
     }
 
-    if (!filterDayId) return []; // no day selected → hide all homestays
+    if (!filterDayId) return state.homestays; // no day selected → show all homestays
 
     const day = state.trip?.days?.find(d => d.id === filterDayId);
     if (!day || !day.stops || day.stops.length === 0) return state.homestays;
 
     return state.homestays.filter(h =>
-      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 5)
+      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 25)
     );
   }, [state.homestays, state.trip.days, highlightedDayId, state.activeStopId]);
 
@@ -386,10 +388,53 @@ export default function MapPanel() {
   const handleShowNearbyPlaces = useCallback(async (stop) => {
     dispatch({ type: 'SET_LOADING_POIS', payload: true });
     try {
-      const response = await fetch(`/api/poi?lat=${stop.lat}&lng=${stop.lng}&radius=500`);
+      const allStops = state.trip?.days?.flatMap(d => d.stops || []) || [];
+      const allStopsParam = allStops.map(s => `${s.lat},${s.lng}`).join('|');
+      const response = await fetch(`/api/poi?lat=${stop.lat}&lng=${stop.lng}&radius=500&allStops=${encodeURIComponent(allStopsParam)}`);
       if (response.ok) {
         const pois = await response.json();
-        dispatch({ type: 'SET_NEARBY_POIS', payload: pois });
+        
+        const hotels = pois.filter(p => p.category === 'hotel');
+        const nonHotels = pois.filter(p => p.category !== 'hotel');
+
+        if (hotels.length > 0) {
+          const activeDay = state.trip?.days?.find(d => d.stops?.some(s => s.id === stop.id));
+          const targetDayId = activeDay ? activeDay.id : (stop.dayId || 'day-1');
+
+          const newLodgings = hotels.map((h, idx) => {
+            const price = 6000 + (idx * 3500) + Math.floor(Math.random() * 2000);
+            const dist = haversine(stop.lat, stop.lng, h.lat, h.lng);
+            const commuteMins = Math.max(1, Math.round(dist / 0.08));
+
+            return {
+              id: h.id.replace('poi-', 'lodging-'),
+              name: h.name,
+              lat: h.lat,
+              lng: h.lng,
+              pricePerNight: price,
+              rating: parseFloat(h.rating) || 4.0,
+              reviewCount: h.reviewsCount || Math.floor(25 + Math.random() * 150),
+              amenities: ['Free Wi-Fi', 'Breakfast', 'Air Conditioning', 'Luggage Storage'],
+              avgCommuteMinutes: commuteMins,
+              rationale: `Hotel recommendation found nearby. Rated ${h.rating}★.`,
+              dayId: targetDayId
+            };
+          });
+
+          // Deduplicate and append to current homestays via ref (avoids infinite loop)
+          const currentHomestays = homestaysRef.current;
+          const existingIds = new Set(currentHomestays.map(item => item.id));
+          const updatedHomestays = [...currentHomestays];
+          newLodgings.forEach(l => {
+            if (!existingIds.has(l.id)) {
+              updatedHomestays.push(l);
+            }
+          });
+
+          dispatch({ type: 'SET_HOMESTAYS', payload: updatedHomestays });
+        }
+
+        dispatch({ type: 'SET_NEARBY_POIS', payload: nonHotels });
         
         if (mapRef.current) {
           const currentZoom = mapRef.current.getZoom();
@@ -406,7 +451,7 @@ export default function MapPanel() {
     } finally {
       dispatch({ type: 'SET_LOADING_POIS', payload: false });
     }
-  }, [dispatch]);
+  }, [dispatch, state.trip?.days]);
 
   // Fetch nearby POIs automatically when activeStop changes
   useEffect(() => {
@@ -476,6 +521,7 @@ export default function MapPanel() {
       });
 
       mapRef.current = map;
+      window.testMap = map;
 
       // Handle dynamic resizing (e.g. ChatPanel width transitions or window resizes)
       const resizeObserver = new ResizeObserver(() => {
@@ -544,8 +590,8 @@ export default function MapPanel() {
     const map = mapRef.current;
     if (!map || useMockMap) return;
 
-    // Skip auto-fitting bounds if the user has an active selection (stop or homestay)
-    if (state.activeStopId || state.activeHomestayOnMapId || state.selectedHomestayId) {
+    // Skip auto-fitting bounds if the user has an active selection (stop or homestay) or if AI provided a specific map center
+    if (state.activeStopId || state.activeHomestayOnMapId || state.selectedHomestayId || state.mapCenter) {
       return;
     }
 
@@ -708,6 +754,8 @@ export default function MapPanel() {
     if (!map || useMockMap) return;
 
     const syncMapData = () => {
+      window.testStops = state.trip?.days?.flatMap(d => d.stops);
+      window.testMapCenter = state.mapCenter;
       try {
         markersRef.current.forEach(m => m.remove());
         markersRef.current = [];
@@ -1146,6 +1194,7 @@ export default function MapPanel() {
             if (poi.category === 'food') icon = '🍱';
             else if (poi.category === 'cafe') icon = '☕';
             else if (poi.category === 'sight') icon = '🏛️';
+            else if (poi.category === 'hotel') icon = '🏨';
 
             el.innerHTML = `
               <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer;">
@@ -1499,9 +1548,32 @@ export default function MapPanel() {
                         {activeStop.costEstimate === 0 ? 'Free' : `¥${activeStop.costEstimate.toLocaleString()}`}
                       </span>
                     </div>
-                    <div className="rounded-lg p-2" style={{ background: 'var(--surface-2)', borderTop: '1px solid var(--border)' }}>
+                    <div className="rounded-lg p-2 mb-2" style={{ background: 'var(--surface-2)', borderTop: '1px solid var(--border)' }}>
                       <span className="text-[7px] font-bold uppercase tracking-widest block mb-0.5" style={{ color: 'var(--accent)' }}>Why this?</span>
                       <p className="text-[9px] leading-relaxed" style={{ color: 'var(--muted)' }}>{activeStop.rationale}</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleShowNearbyPlaces(activeStop);
+                        }}
+                        className="flex-1 py-1.5 bg-accent text-bg rounded-lg text-[10px] font-bold cursor-pointer"
+                      >
+                        🔍 Nearby
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const activeDay = state.trip.days.find(d => d.stops.some(s => s.id === activeStop.id));
+                          if (activeDay) {
+                            dispatch({ type: 'REMOVE_STOP', payload: { dayId: activeDay.id, stopId: activeStop.id } });
+                          }
+                        }}
+                        className="px-2.5 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg text-[10px] font-bold cursor-pointer"
+                      >
+                        🗑️
+                      </button>
                     </div>
                     <button
                       onClick={() => setClosedPopupStopId(activeStop.id)}

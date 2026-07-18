@@ -100,7 +100,7 @@ export default function ItineraryPanel() {
     const day = state.trip.days.find(d => d.id === expandedDayId);
     if (!day || !day.stops || day.stops.length === 0) return [];
     return state.homestays.filter(h =>
-      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 5)
+      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 25)
     );
   }, [state.homestays, state.trip?.days, expandedDayId]);
 
@@ -135,11 +135,11 @@ export default function ItineraryPanel() {
   // Scroll selected homestay into view
   useEffect(() => {
     if (state.selectedHomestayId && state.trip?.days) {
-      // Find the day this homestay belongs to (first day that has a stop within 5km)
+      // Find the day this homestay belongs to (first day that has a stop within 25km)
       const home = state.homestays.find(h => h.id === state.selectedHomestayId);
       if (home) {
         const targetDay = state.trip.days.find(d =>
-          d.stops?.some(stop => haversine(home.lat, home.lng, stop.lat, stop.lng) <= 5)
+          d.stops?.some(stop => haversine(home.lat, home.lng, stop.lat, stop.lng) <= 25)
         );
         if (targetDay && expandedDayId !== targetDay.id) {
           setExpandedDayId(targetDay.id);
@@ -617,6 +617,7 @@ export default function ItineraryPanel() {
                                             if (poi.category === 'food') icon = '🍱';
                                             else if (poi.category === 'cafe') icon = '☕';
                                             else if (poi.category === 'sight') icon = '🏛️';
+                                            else if (poi.category === 'hotel') icon = '🏨';
                                             return (
                                               <div 
                                                 key={poi.id} 

@@ -20,6 +20,11 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Stable fingerprint of trip stops to avoid re-fetching lodgings on every minor state change
+  const tripStopsFingerprint = state.trip?.days
+    ?.map(d => `${d.id}:${(d.stops || []).map(s => `${s.lat.toFixed(3)},${s.lng.toFixed(3)}`).join('|')}`)
+    .join('_') || '';
+
   // Fetch real/dynamic lodgings from the backend when stops change (distributed for each day)
   useEffect(() => {
     if (!hasTrip || !state.trip?.days || state.trip.days.length === 0) return;
@@ -39,8 +44,8 @@ export default function App() {
           const avgLat = dayLat / day.stops.length;
           const avgLng = dayLng / day.stops.length;
 
-          // Fetch lodgings in a tighter 1500m radius for this day
-          const response = await fetch(`/api/lodgings?lat=${avgLat}&lng=${avgLng}&radius=1500`);
+          // Fetch lodgings in a 5000m radius for this day (wide enough for rural/mountain regions)
+          const response = await fetch(`/api/lodgings?lat=${avgLat}&lng=${avgLng}&radius=5000`);
           if (response.ok) {
             const data = await response.json();
             return data.map(item => ({ ...item, dayId: day.id }));
@@ -67,7 +72,7 @@ export default function App() {
     };
 
     fetchAllLodgings();
-  }, [state.trip?.id, hasTrip, dispatch]);
+  }, [tripStopsFingerprint, hasTrip, dispatch]);
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg text-text">

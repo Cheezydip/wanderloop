@@ -58,7 +58,10 @@ async function fetchRealLodgings(lat, lng, radius) {
     try {
       const response = await fetch(mirror, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
+        },
         body: `data=${encodeURIComponent(overpassQuery)}`,
         signal: AbortSignal.timeout(30000)
       });
@@ -72,23 +75,103 @@ async function fetchRealLodgings(lat, lng, radius) {
     }
   }
 
-  if (!data || !data.elements || data.elements.length === 0) {
-    console.log(`Generating fallback mock lodgings for coordinate [${lat}, ${lng}]`);
-    return generateFallbackLodgings(lat, lng);
+  if (data && data.elements && data.elements.length > 0) {
+    // De-duplicate by name, take top 3
+    const seen = new Set();
+    const unique = [];
+    for (const el of data.elements) {
+      const name = el.tags?.name;
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      unique.push(el);
+      if (unique.length >= 3) break;
+    }
+
+    return unique.map((el, i) => formatLodging(el, i, lat, lng));
   }
 
-  // De-duplicate by name, take top 3
+  // 2. Try Geoapify API key fallback
+  if (process.env.GEOAPIFY_API_KEY) {
+    try {
+      console.log(`OpenStreetMap returned no results. Querying Geoapify API backup for coordinates [${lat}, ${lng}]`);
+      const geoResults = await fetchGeoapifyLodgings(lat, lng, radius);
+      if (geoResults.length > 0) return geoResults;
+    } catch (err) {
+      console.error('Geoapify lodging backup failed:', err.message);
+    }
+  }
+
+  // 3. Try Foursquare API key fallback
+  if (process.env.FOURSQUARE_API_KEY) {
+    try {
+      console.log(`OpenStreetMap returned no results. Querying Foursquare API backup for coordinates [${lat}, ${lng}]`);
+      const fsqResults = await fetchFoursquareLodgings(lat, lng, radius);
+      if (fsqResults.length > 0) return fsqResults;
+    } catch (err) {
+      console.error('Foursquare lodging backup failed:', err.message);
+    }
+  }
+
+  // 4. Simulated local mock data
+  console.log(`Generating fallback mock lodgings for coordinate [${lat}, ${lng}]`);
+  return generateFallbackLodgings(lat, lng);
+}
+
+async function fetchFoursquareLodgings(lat, lng, radius) {
+  const apiKey = process.env.FOURSQUARE_API_KEY;
+  if (!apiKey) {
+    throw new Error('FOURSQUARE_API_KEY not configured');
+  }
+
+  // Foursquare category ID: 19009 (Lodging/Accommodation)
+  const url = `https://api.foursquare.com/v3/places/search?ll=${lat},${lng}&radius=${radius}&categories=19009&limit=10`;
+
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': apiKey,
+      'Accept': 'application/json'
+    },
+    signal: AbortSignal.timeout(10000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Foursquare API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (!data || !data.results) return [];
+
+  // Take top 3 unique places
   const seen = new Set();
   const unique = [];
-  for (const el of data.elements) {
-    const name = el.tags?.name;
-    if (!name || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
-    unique.push(el);
+  for (const place of data.results) {
+    if (seen.has(place.name.toLowerCase())) continue;
+    seen.add(place.name.toLowerCase());
+    unique.push(place);
     if (unique.length >= 3) break;
   }
 
-  return unique.map((el, i) => formatLodging(el, i, lat, lng));
+  return unique.map((place, idx) => {
+    const elLat = place.geocodes?.main?.latitude || lat;
+    const elLng = place.geocodes?.main?.longitude || lng;
+    const distKm = haversineDistance(lat, lng, elLat, elLng);
+    const walkMinutes = Math.max(1, Math.round(distKm / 0.08));
+
+    const pricePerNight = 6000 + (idx * 5000) + Math.floor(Math.random() * 3000);
+
+    return {
+      id: `lodging-fsq-${place.fsq_id}`,
+      name: place.name,
+      lat: elLat,
+      lng: elLng,
+      pricePerNight,
+      rating: parseFloat((4.0 + Math.random() * 0.8).toFixed(1)),
+      reviewCount: Math.floor(25 + Math.random() * 180),
+      amenities: ['Free Wi-Fi', 'Breakfast', 'Air Conditioning', 'Luggage Storage'],
+      avgCommuteMinutes: walkMinutes,
+      rationale: `Real hotel found via Foursquare ${distKm.toFixed(1)}km from your planned stops.`
+    };
+  });
 }
 
 function formatLodging(el, index, queryLat, queryLng) {
@@ -217,6 +300,74 @@ function generateFallbackLodgings(lat, lng) {
       rationale: 'Budget hostel fallback generated near your selected locations.'
     }
   ];
+}
+
+async function fetchGeoapifyLodgings(lat, lng, radius) {
+  const apiKey = process.env.GEOAPIFY_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEOAPIFY_API_KEY not configured');
+  }
+
+  const categories = 'accommodation.hotel,accommodation.hostel,accommodation.motel,accommodation.guest_house';
+  let currentRadius = Math.max(radius, 1000);
+  let features = [];
+  
+  while (currentRadius <= 20000) {
+    const url = `https://api.geoapify.com/v2/places?categories=${categories}&filter=circle:${lng},${lat},${currentRadius}&limit=10&apiKey=${apiKey}`;
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.features && data.features.length >= 3) {
+          features = data.features;
+          console.log(`Geoapify Lodgings found ${features.length} results at radius ${currentRadius}m`);
+          break;
+        } else if (data && data.features && data.features.length > 0) {
+          features = data.features; // Hold onto whatever we have so far
+        }
+      }
+    } catch (err) {
+      console.warn(`Geoapify lodging search at radius ${currentRadius}m failed:`, err.message);
+    }
+    
+    if (currentRadius >= 20000) break;
+    currentRadius = Math.min(20000, Math.round(currentRadius * 2.5));
+  }
+
+  if (features.length === 0) return [];
+
+  const seen = new Set();
+  const unique = [];
+  for (const f of features) {
+    const props = f.properties || {};
+    const name = props.name || props.street || 'Cozy Mountain Lodge';
+    if (seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    unique.push({ ...props, displayName: name });
+    if (unique.length >= 3) break;
+  }
+
+  return unique.map((props, idx) => {
+    const elLat = props.lat;
+    const elLng = props.lon;
+    const distKm = haversineDistance(lat, lng, elLat, elLng);
+    const walkMinutes = Math.max(1, Math.round(distKm / 0.08));
+
+    const pricePerNight = 4000 + (idx * 2500) + Math.floor(Math.random() * 2000);
+
+    return {
+      id: `lodging-geoapify-${props.place_id}`,
+      name: props.displayName,
+      lat: elLat,
+      lng: elLng,
+      pricePerNight,
+      rating: parseFloat((4.0 + Math.random() * 0.8).toFixed(1)),
+      reviewCount: Math.floor(20 + Math.random() * 200),
+      amenities: ['Free Wi-Fi', 'Breakfast', 'Air Conditioning', 'Luggage Storage'],
+      avgCommuteMinutes: walkMinutes,
+      rationale: `Real accommodation found via Geoapify ${distKm.toFixed(1)}km from your planned stops.`
+    };
+  });
 }
 
 export default router;
