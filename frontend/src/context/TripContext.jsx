@@ -1,5 +1,6 @@
 import { createContext, useContext, useReducer } from 'react';
 import { mockTrip, mockHomestays, mockKyotoTrip, mockOsakaTrip, mockHakoneTrip } from '../data/mockTrip';
+import { getTripCurrency, getDefaultBudgetLimit } from '../utils/currency';
 
 export const DEFAULT_BUDGET_ITEMS = [
   { name: 'Accommodation (3 nights)', amount: 12000, color: '#2dd4bf' },
@@ -7,6 +8,108 @@ export const DEFAULT_BUDGET_ITEMS = [
   { name: 'Activity entries', amount: 3000, color: '#f43f5e' },
   { name: 'Local transport', amount: 2000, color: '#84cc16' }
 ];
+
+export function syncBudgetItems(trip, homestays, selectedHomestayId) {
+  if (!trip) return DEFAULT_BUDGET_ITEMS;
+
+  const { code } = getTripCurrency(trip);
+  const daysCount = Math.max((trip.days || []).length, 1);
+
+  // Calculate sum of activity costEstimates from all stops
+  let activityTotal = 0;
+  if (trip.days) {
+    trip.days.forEach(day => {
+      (day.stops || []).forEach(stop => {
+        activityTotal += Number(stop.costEstimate) || 0;
+      });
+    });
+  }
+
+  // Determine accommodation cost from selected hotel if available
+  let accomOverride = null;
+  if (selectedHomestayId && Array.isArray(homestays)) {
+    const selected = homestays.find(h => h.id === selectedHomestayId);
+    if (selected && selected.pricePerNight) {
+      accomOverride = selected.pricePerNight * daysCount;
+    }
+  }
+
+  // If AI or user provided explicit budgetItems, update activity & accommodation entries
+  if (Array.isArray(trip.budgetItems) && trip.budgetItems.length > 0) {
+    let foundActivity = false;
+    let foundAccom = false;
+    const updated = trip.budgetItems.map(item => {
+      const lower = item.name.toLowerCase();
+      if (lower.includes('activity') || lower.includes('activities') || lower.includes('entries') || lower.includes('sightseeing')) {
+        foundActivity = true;
+        return { ...item, amount: activityTotal };
+      }
+      if (accomOverride !== null && (lower.includes('accommodation') || lower.includes('hotel') || lower.includes('lodging') || lower.includes('stay'))) {
+        foundAccom = true;
+        return { ...item, amount: accomOverride };
+      }
+      return item;
+    });
+
+    if (!foundActivity) {
+      updated.push({ name: 'Activities & entries', amount: activityTotal, color: '#f43f5e' });
+    }
+    if (accomOverride !== null && !foundAccom) {
+      updated.push({ name: `Accommodation (${daysCount} night${daysCount > 1 ? 's' : ''})`, amount: accomOverride, color: '#2dd4bf' });
+    }
+    return updated;
+  }
+
+  // ─── Recalibrated baseline rates (budget-friendly traveler defaults) ───
+  let accomPerNight = 2800;  // JPY default
+  let foodPerDay = 1400;
+  let transportPerDay = 500;
+
+  if (code === 'INR') {
+    accomPerNight = 1500;
+    foodPerDay = 700;
+    transportPerDay = 300;
+  } else if (code === 'EUR') {
+    accomPerNight = 60;
+    foodPerDay = 30;
+    transportPerDay = 10;
+  } else if (code === 'GBP') {
+    accomPerNight = 55;
+    foodPerDay = 25;
+    transportPerDay = 10;
+  } else if (code === 'USD') {
+    accomPerNight = 75;
+    foodPerDay = 35;
+    transportPerDay = 12;
+  } else if (code === 'AUD') {
+    accomPerNight = 95;
+    foodPerDay = 40;
+    transportPerDay = 15;
+  } else if (code === 'CAD') {
+    accomPerNight = 90;
+    foodPerDay = 35;
+    transportPerDay = 12;
+  } else if (code === 'THB') {
+    accomPerNight = 900;
+    foodPerDay = 500;
+    transportPerDay = 180;
+  } else if (code === 'AED') {
+    accomPerNight = 220;
+    foodPerDay = 90;
+    transportPerDay = 30;
+  }
+
+  const accomTotal = accomOverride !== null ? accomOverride : (accomPerNight * daysCount);
+  const foodTotal = foodPerDay * daysCount;
+  const transportTotal = transportPerDay * daysCount;
+
+  return [
+    { name: `Accommodation (${daysCount} night${daysCount > 1 ? 's' : ''})`, amount: accomTotal, color: '#2dd4bf' },
+    { name: 'Food & dining', amount: foodTotal, color: '#f59e0b' },
+    { name: 'Activity entries', amount: activityTotal, color: '#f43f5e' },
+    { name: 'Local transport', amount: transportTotal, color: '#84cc16' }
+  ];
+}
 
 const initialState = {
   trip: null,
@@ -31,61 +134,94 @@ const initialState = {
   loadingPOIs: false, // loading state for nearby POIs
   routesData: {}, // OSRM route data mapped by dayId
   budgetItems: DEFAULT_BUDGET_ITEMS,
+  toast: null, // { type: 'warning' | 'info', message: string }
 };
 
 function tripReducer(state, action) {
   switch (action.type) {
+    case 'SET_TOAST':
+      return {
+        ...state,
+        toast: action.payload
+      };
+
     case 'SET_MAP_CENTER':
       return {
         ...state,
         mapCenter: action.payload
       };
 
-    case 'SET_TRIP':
+    case 'SET_TRIP': {
+      const newTrip = {
+        ...action.payload,
+        messages: action.payload.messages || state.trip?.messages || []
+      };
+      const newItems = syncBudgetItems(newTrip, state.homestays, state.selectedHomestayId);
+      const computedTotal = newItems.reduce((acc, i) => acc + i.amount, 0);
+      if (!newTrip.budget || newTrip.budget === 25000 && getTripCurrency(newTrip).code !== 'JPY') {
+        newTrip.budget = computedTotal > 0 ? Math.ceil(computedTotal * 1.15) : getDefaultBudgetLimit(getTripCurrency(newTrip).code);
+      }
       return {
         ...state,
-        trip: {
-          ...action.payload,
-          messages: action.payload.messages || state.trip?.messages || []
-        },
+        trip: newTrip,
+        budgetItems: newItems,
         hasTrip: true,
         mapCenter: null
       };
+    }
       
-    case 'ADD_STOP':
+    case 'ADD_STOP': {
+      const updatedDays = state.trip.days.map((day) => {
+        if (day.id === action.payload.dayId) {
+          const newStops = [...day.stops, action.payload.stop].map((stop, idx) => ({
+            ...stop,
+            order: idx + 1,
+          }));
+          return { ...day, stops: newStops };
+        }
+        return day;
+      });
+      const updatedTrip = { ...state.trip, days: updatedDays };
+      const newItems = syncBudgetItems(updatedTrip, state.homestays, state.selectedHomestayId);
+      const newTotalSpend = newItems.reduce((acc, i) => acc + i.amount, 0);
+      const budgetLimit = updatedTrip.budget || 25000;
+
+      let newToast = state.toast;
+      if (newTotalSpend > budgetLimit) {
+        const sym = getTripCurrency(updatedTrip).symbol;
+        const exceeded = newTotalSpend - budgetLimit;
+        newToast = {
+          type: 'warning',
+          message: `⚠️ Stop added! Budget exceeded by ${sym}${exceeded.toLocaleString()}`
+        };
+      }
+
       return {
         ...state,
-        trip: {
-          ...state.trip,
-          days: state.trip.days.map((day) => {
-            if (day.id === action.payload.dayId) {
-              const newStops = [...day.stops, action.payload.stop].map((stop, idx) => ({
-                ...stop,
-                order: idx + 1,
-              }));
-              return { ...day, stops: newStops };
-            }
-            return day;
-          }),
-        },
+        trip: updatedTrip,
+        budgetItems: newItems,
+        toast: newToast,
       };
+    }
       
-    case 'REMOVE_STOP':
+    case 'REMOVE_STOP': {
+      const updatedDays = state.trip.days.map((day) => {
+        if (day.id === action.payload.dayId) {
+          const newStops = day.stops
+            .filter((stop) => stop.id !== action.payload.stopId)
+            .map((stop, idx) => ({ ...stop, order: idx + 1 }));
+          return { ...day, stops: newStops };
+        }
+        return day;
+      });
+      const updatedTrip = { ...state.trip, days: updatedDays };
+      const newItems = syncBudgetItems(updatedTrip, state.homestays, state.selectedHomestayId);
       return {
         ...state,
-        trip: {
-          ...state.trip,
-          days: state.trip.days.map((day) => {
-            if (day.id === action.payload.dayId) {
-              const newStops = day.stops
-                .filter((stop) => stop.id !== action.payload.stopId)
-                .map((stop, idx) => ({ ...stop, order: idx + 1 }));
-              return { ...day, stops: newStops };
-            }
-            return day;
-          }),
-        },
+        trip: updatedTrip,
+        budgetItems: newItems,
       };
+    }
       
     case 'REORDER_STOPS':
       return {
@@ -114,11 +250,24 @@ function tripReducer(state, action) {
         },
       };
       
-    case 'SELECT_HOMESTAY':
+    case 'SELECT_HOMESTAY': {
+      const newSelectedId = action.payload;
+      const newBudgetItems = syncBudgetItems(state.trip, state.homestays, newSelectedId);
+      const newTotal = newBudgetItems.reduce((acc, i) => acc + i.amount, 0);
+      const budgetLimit = state.trip?.budget || 25000;
+      let toast = state.toast;
+      if (newTotal > budgetLimit) {
+        const sym = getTripCurrency(state.trip).symbol;
+        const exceeded = newTotal - budgetLimit;
+        toast = { type: 'warning', message: `⚠️ Hotel selected! Budget exceeded by ${sym}${exceeded.toLocaleString()}` };
+      }
       return {
         ...state,
-        selectedHomestayId: action.payload,
+        selectedHomestayId: newSelectedId,
+        budgetItems: newBudgetItems,
+        toast,
       };
+    }
       
     case 'HOVER_HOMESTAY':
       return { ...state, hoveredHomestayId: action.payload };
@@ -250,7 +399,7 @@ function tripReducer(state, action) {
         isGenerating: false,
         isInterviewMode: false,
         routesData: {},
-        budgetItems: DEFAULT_BUDGET_ITEMS,
+        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestayId),
       };
     }
 
@@ -284,7 +433,7 @@ function tripReducer(state, action) {
         isGenerating: false,
         isInterviewMode: false,
         routesData: {},
-        budgetItems: DEFAULT_BUDGET_ITEMS
+        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestayId)
       };
     }
       

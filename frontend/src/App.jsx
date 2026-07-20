@@ -74,8 +74,31 @@ export default function App() {
     fetchAllLodgings();
   }, [tripStopsFingerprint, hasTrip, dispatch]);
 
+  // Auto-dismiss toast notifications after 4 seconds
+  useEffect(() => {
+    if (state.toast) {
+      const timer = setTimeout(() => {
+        dispatch({ type: 'SET_TOAST', payload: null });
+      }, 4500);
+      return () => clearTimeout(timer);
+    }
+  }, [state.toast, dispatch]);
+
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg text-text">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg text-text relative">
+      {/* Floating Toast Notification */}
+      {state.toast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl bg-rose-500 text-white font-semibold text-xs shadow-2xl scale-in border border-rose-400/40">
+          <span>{state.toast.message}</span>
+          <button
+            onClick={() => dispatch({ type: 'SET_TOAST', payload: null })}
+            className="ml-2 text-white/80 hover:text-white font-bold cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Top Bar */}
       {hasTrip && <TopBar />}
 
@@ -89,7 +112,9 @@ export default function App() {
           <div className="flex flex-1 flex-col overflow-hidden h-full">
             <div className="flex-1 overflow-hidden relative">
               {activeTab === 'chat' && <ChatPanel />}
-              {activeTab === 'map' && <MapPanel />}
+              <div style={{ display: activeTab === 'map' ? 'block' : 'none', width: '100%', height: '100%' }}>
+                <MapPanel />
+              </div>
               {activeTab === 'plan' && <ItineraryPanel />}
             </div>
 

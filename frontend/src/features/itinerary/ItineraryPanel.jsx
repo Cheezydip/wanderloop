@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTrip, DEFAULT_BUDGET_ITEMS } from '../../context/TripContext';
 import { getDayColorHex } from '../../utils/colors';
 import { haversine } from '../../utils/haversine';
 import { fetchOptimizedOrder } from '../../utils/routeService';
+import { getCurrencySymbol } from '../../utils/currency';
 
 /* ─── Skeleton Shimmer for Generating State ─── */
 function SkeletonDay({ idx }) {
@@ -46,9 +47,52 @@ export default function ItineraryPanel() {
   const [optimizingDayId, setOptimizingDayId] = useState(null);
   const [isBudgetOpen, setIsBudgetOpen] = useState(false);
 
+  // ─── Add Stop Modal State ───
+  const [addStopModalDayId, setAddStopModalDayId] = useState(null);
+  const [newStopName, setNewStopName] = useState('');
+  const [newStopCost, setNewStopCost] = useState('');
+  const [newStopTime, setNewStopTime] = useState('10:00 AM - 12:00 PM');
+  const [newStopRationale, setNewStopRationale] = useState('');
+
+  const currencySymbol = getCurrencySymbol(state.trip);
   const totalSpend = (state.budgetItems || []).reduce((sum, item) => sum + item.amount, 0);
   const budgetLimit = state.trip?.budget || 25000;
   const percentage = Math.min((totalSpend / budgetLimit) * 100, 100);
+  const isOverBudget = totalSpend > budgetLimit;
+  const exceededAmount = isOverBudget ? totalSpend - budgetLimit : 0;
+
+  const handleOpenAddStopModal = (dayId) => {
+    setAddStopModalDayId(dayId);
+    setNewStopName('');
+    setNewStopCost('');
+    setNewStopTime('10:00 AM - 12:00 PM');
+    setNewStopRationale('');
+  };
+
+  const handleConfirmAddStop = (e) => {
+    e.preventDefault();
+    if (!newStopName.trim()) return;
+
+    const costNum = Number(newStopCost) || 0;
+    const targetDay = state.trip?.days?.find(d => d.id === addStopModalDayId);
+    const baseStop = targetDay?.stops?.[0];
+    const baseLat = baseStop?.lat || state.mapCenter?.lat || 20.0;
+    const baseLng = baseStop?.lng || state.mapCenter?.lng || 78.0;
+
+    const newStop = {
+      id: `s-added-${Date.now()}`,
+      name: newStopName.trim(),
+      lat: baseLat + (Math.random() - 0.5) * 0.01,
+      lng: baseLng + (Math.random() - 0.5) * 0.01,
+      timeEstimate: newStopTime || '10:00 AM - 12:00 PM',
+      costEstimate: costNum,
+      rationale: newStopRationale.trim() || 'Custom user added stop',
+      order: (targetDay?.stops?.length || 0) + 1
+    };
+
+    dispatch({ type: 'ADD_STOP', payload: { dayId: addStopModalDayId, stop: newStop } });
+    setAddStopModalDayId(null);
+  };
 
   const ADD_COLORS = ['#2dd4bf', '#f59e0b', '#8b5cf6', '#f43f5e', '#84cc16', '#a78bfa', '#06b6d4', '#ec4899'];
   const handleAddBudgetItem = () => {
@@ -120,7 +164,7 @@ export default function ItineraryPanel() {
       }, 150);
       return () => clearTimeout(timer);
     }
-  }, [state.activeStopId, state.trip?.days]);
+  }, [state.activeStopId]);
 
   // Scroll expanded day into view
   useEffect(() => {
@@ -132,12 +176,13 @@ export default function ItineraryPanel() {
     }
   }, [expandedDayId]);
 
-  // Scroll selected homestay into view
+  // Scroll selected homestay into view ONLY when selectedHomestayId changes
+  const prevHomestayRef = useRef(state.selectedHomestayId);
   useEffect(() => {
-    if (state.selectedHomestayId && state.trip?.days) {
-      // Find the day this homestay belongs to (first day that has a stop within 25km)
+    if (state.selectedHomestayId && state.selectedHomestayId !== prevHomestayRef.current) {
+      prevHomestayRef.current = state.selectedHomestayId;
       const home = state.homestays.find(h => h.id === state.selectedHomestayId);
-      if (home) {
+      if (home && state.trip?.days) {
         const targetDay = state.trip.days.find(d =>
           d.stops?.some(stop => haversine(home.lat, home.lng, stop.lat, stop.lng) <= 25)
         );
@@ -153,8 +198,10 @@ export default function ItineraryPanel() {
         }
       }, 250);
       return () => clearTimeout(timer);
+    } else {
+      prevHomestayRef.current = state.selectedHomestayId;
     }
-  }, [state.selectedHomestayId, state.homestays, state.trip?.days]);
+  }, [state.selectedHomestayId]);
 
   const handleOptimizeStops = async (day) => {
     if (day.stops.length < 3) return;
@@ -275,18 +322,31 @@ export default function ItineraryPanel() {
         <div className="flex justify-between text-[11px] font-medium mb-1.5" style={{ color: 'var(--muted)' }}>
           <span>Spent</span>
           <span>
-            <strong style={{ color: 'var(--text)' }}>¥{totalSpend.toLocaleString()}</strong> / ¥{budgetLimit.toLocaleString()}
+            <strong style={{ color: isOverBudget ? '#f87171' : 'var(--text)' }}>
+              {currencySymbol}{totalSpend.toLocaleString()}
+            </strong> / {currencySymbol}{budgetLimit.toLocaleString()}
           </span>
         </div>
         <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: 'var(--surface-3)' }}>
           <div
-            className="h-full rounded-full transition-all duration-500"
+            className={`h-full rounded-full transition-all duration-500 ${isOverBudget ? 'bg-rose-500 animate-pulse' : ''}`}
             style={{
               width: `${percentage}%`,
-              backgroundColor: percentage > 90 ? '#ef4444' : percentage > 70 ? '#f59e0b' : 'var(--accent)'
+              backgroundColor: isOverBudget ? '#ef4444' : percentage > 70 ? '#f59e0b' : 'var(--accent)'
             }}
           ></div>
         </div>
+        {isOverBudget && (
+          <div className="mt-2.5 px-3 py-1.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-[10px] font-semibold flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <span>⚠️</span>
+              <span>Budget Exceeded</span>
+            </span>
+            <span className="font-mono font-bold text-[11px]">
+              +{currencySymbol}{exceededAmount.toLocaleString()} over limit
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Budget Editor Toggle */}
@@ -320,7 +380,7 @@ export default function ItineraryPanel() {
             {/* Total Budget */}
             <div className="flex items-center gap-2">
               <label className="text-[11px] font-medium shrink-0" style={{ color: 'var(--muted)' }}>Total budget</label>
-              <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--muted)' }}>¥</span>
+              <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--muted)' }}>{currencySymbol}</span>
               <input
                 type="number"
                 value={budgetLimit}
@@ -465,7 +525,7 @@ export default function ItineraryPanel() {
 
                       <div className="flex items-center gap-2.5">
                         <span className="font-mono text-[10px]" style={{ color: 'var(--muted)' }}>
-                          ¥{dayCost.toLocaleString()}
+                          {currencySymbol}{dayCost.toLocaleString()}
                         </span>
                         <svg
                           className={`w-3.5 h-3.5 transition-transform duration-300 ${
@@ -501,15 +561,30 @@ export default function ItineraryPanel() {
                               if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.legs && routeData.features[0].properties.legs[idx]) {
                                 const leg = routeData.features[0].properties.legs[idx];
                                 const distance = leg.distance;
-                                const duration = leg.duration;
-                                const mins = Math.round(duration / 60);
                                 const distStr = distance < 1000 ? `${Math.round(distance)}m` : `${(distance / 1000).toFixed(1)}km`;
-                                commuteText = `🚶 ${distStr} · ${mins} min walking`;
+                                if (distance < 1500) {
+                                  const mins = Math.round(leg.duration / 60);
+                                  commuteText = `🚶 ${distStr} · ${mins} min walk`;
+                                } else if (distance < 15000) {
+                                  const driveMins = Math.max(1, Math.round(distance / 500));
+                                  commuteText = `🚗 ${distStr} · ~${driveMins} min drive`;
+                                } else {
+                                  const trainMins = Math.max(1, Math.round(distance / 800));
+                                  commuteText = `🚆 ${distStr} · ~${trainMins} min train`;
+                                }
                               } else {
                                 const dist = haversine(stop.lat, stop.lng, nextStop.lat, nextStop.lng);
-                                const mins = Math.round(dist * 12);
                                 const distStr = dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`;
-                                commuteText = `🚶 ${distStr} · ~${mins} min`;
+                                if (dist < 1.5) {
+                                  const mins = Math.max(1, Math.round(dist / 0.08));
+                                  commuteText = `🚶 ${distStr} · ~${mins} min walk`;
+                                } else if (dist < 15) {
+                                  const driveMins = Math.max(1, Math.round(dist / 0.5));
+                                  commuteText = `🚗 ${distStr} · ~${driveMins} min drive`;
+                                } else {
+                                  const trainMins = Math.max(1, Math.round(dist / 0.8));
+                                  commuteText = `🚆 ${distStr} · ~${trainMins} min train`;
+                                }
                               }
                             }
 
@@ -566,7 +641,7 @@ export default function ItineraryPanel() {
 
                                   <div className="flex items-center gap-1.5 shrink-0">
                                     <span className="font-mono text-[9px]" style={{ color: 'var(--muted)' }}>
-                                      {stop.costEstimate === 0 ? 'Free' : `¥${stop.costEstimate.toLocaleString()}`}
+                                      {stop.costEstimate === 0 ? 'Free' : `${currencySymbol}${stop.costEstimate.toLocaleString()}`}
                                     </span>
                                     <button
                                       onClick={(e) => handleDeleteStop(day.id, stop.id, e)}
@@ -679,12 +754,13 @@ export default function ItineraryPanel() {
                             </svg>
                             ~{estCommute} min transit
                           </span>
-                          <span className="font-semibold text-white/70" style={{ color: 'var(--text)' }}>¥{dayCost.toLocaleString()}</span>
+                          <span className="font-semibold text-white/70" style={{ color: 'var(--text)' }}>{currencySymbol}{dayCost.toLocaleString()}</span>
                         </div>
 
                         {/* Add / Re-optimize Actions */}
                         <div className="pt-2 flex gap-1.5">
                           <button
+                            onClick={() => handleOpenAddStopModal(day.id)}
                             className="flex-1 py-1.5 rounded-lg border text-[9px] font-semibold transition-all cursor-pointer"
                             style={{
                               background: 'var(--surface)',
@@ -804,7 +880,7 @@ export default function ItineraryPanel() {
                             <div className="flex justify-between items-center">
                               <div>
                                 <span className="font-mono text-xs font-bold" style={{ color: 'var(--text)' }}>
-                                  ¥{home.pricePerNight.toLocaleString()}
+                                  {currencySymbol}{home.pricePerNight.toLocaleString()}
                                 </span>
                                 <span className="text-[8px]" style={{ color: 'var(--muted)' }}> / night</span>
                               </div>
@@ -867,6 +943,123 @@ export default function ItineraryPanel() {
           </>
         )}
       </div>
+
+      {/* Add Stop Modal */}
+      {addStopModalDayId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-md p-6 rounded-2xl border shadow-2xl space-y-4 text-left scale-in"
+            style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex justify-between items-center pb-3 border-b" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="font-bold text-sm flex items-center gap-2" style={{ color: 'var(--text)' }}>
+                <span className="w-6 h-6 rounded-lg flex items-center justify-center text-xs" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>📍</span>
+                Add Stop to Day {state.trip?.days?.find(d => d.id === addStopModalDayId)?.dayNumber || ''}
+              </h3>
+              <button
+                onClick={() => setAddStopModalDayId(null)}
+                className="text-muted hover:text-text text-base font-bold leading-none cursor-pointer px-2 py-1 rounded hover:bg-white/[0.05]"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmAddStop} className="space-y-3.5">
+              <div>
+                <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--muted)' }}>Stop / Location Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Royal Palace Museum, Cafe Central"
+                  value={newStopName}
+                  onChange={(e) => setNewStopName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border text-xs font-medium outline-none focus:border-accent"
+                  style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--muted)' }}>Estimated Cost ({currencySymbol})</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="0 for free"
+                    value={newStopCost}
+                    onChange={(e) => setNewStopCost(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border text-xs font-mono outline-none focus:border-accent"
+                    style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--muted)' }}>Time Slot</label>
+                  <input
+                    type="text"
+                    placeholder="10:00 AM - 12:00 PM"
+                    value={newStopTime}
+                    onChange={(e) => setNewStopTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border text-xs font-mono outline-none focus:border-accent"
+                    style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--muted)' }}>Notes / Rationale</label>
+                <input
+                  type="text"
+                  placeholder="Why you're adding this spot..."
+                  value={newStopRationale}
+                  onChange={(e) => setNewStopRationale(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border text-xs outline-none focus:border-accent"
+                  style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                />
+              </div>
+
+              {/* Live Budget Exceeded Warning Box */}
+              {(() => {
+                const addedCost = Number(newStopCost) || 0;
+                const projTotal = totalSpend + addedCost;
+                const isProjExceeded = projTotal > budgetLimit;
+                const projExceededAmt = projTotal - budgetLimit;
+
+                if (isProjExceeded) {
+                  return (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-2.5">
+                      <span className="text-base shrink-0">⚠️</span>
+                      <div className="space-y-0.5">
+                        <strong className="block font-bold text-rose-400">Budget Exceeded Warning</strong>
+                        <p className="text-[11px] leading-relaxed text-rose-300/90">
+                          Adding this stop ({currencySymbol}{addedCost.toLocaleString()}) will push total trip expenses to <span className="font-mono font-bold">{currencySymbol}{projTotal.toLocaleString()}</span>, exceeding your budget by <span className="font-mono font-extrabold text-rose-300 underline">{currencySymbol}{projExceededAmt.toLocaleString()}</span>!
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAddStopModalDayId(null)}
+                  className="flex-1 py-2 rounded-xl border text-xs font-semibold hover:bg-white/[0.05] transition-colors cursor-pointer"
+                  style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 rounded-xl text-xs font-bold transition-all transform active:scale-95 shadow-md cursor-pointer"
+                  style={{ background: 'var(--accent)', color: 'var(--bg)' }}
+                >
+                  Add Stop
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

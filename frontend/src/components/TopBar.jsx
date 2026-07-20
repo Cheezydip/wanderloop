@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTrip } from '../context/TripContext';
 import { useTheme } from '../context/ThemeContext';
+import { getCurrencySymbol } from '../utils/currency';
 
 export default function TopBar() {
   const { state, dispatch } = useTrip();
@@ -26,6 +27,8 @@ export default function TopBar() {
   }, [showBudgetDropdown]);
 
   const numDays = state.trip?.days?.length || 0;
+
+  const currencySymbol = getCurrencySymbol(state.trip);
 
   // Calculate expenses dynamically from global budgetItems state
   const totalSpend = (state.budgetItems || []).reduce((sum, item) => sum + item.amount, 0);
@@ -139,28 +142,39 @@ export default function TopBar() {
                   setTempBudget(budgetLimit);
                   setIsEditingBudget(false);
                 }}
-                className="hidden md:flex items-center gap-[6px] px-3 py-[5px] rounded-lg text-xs cursor-pointer"
+                className={`hidden md:flex items-center gap-[6px] px-3 py-[5px] rounded-lg text-xs cursor-pointer ${
+                  totalSpend > budgetLimit ? 'bg-rose-500/15 border-rose-500/40 text-rose-400 font-bold' : ''
+                }`}
                 style={{
-                  background: 'var(--surface-2, rgba(255,255,255,0.03))',
-                  border: '1px solid var(--border, rgba(255,255,255,0.06))',
+                  background: totalSpend > budgetLimit ? undefined : 'var(--surface-2, rgba(255,255,255,0.03))',
+                  border: totalSpend > budgetLimit ? undefined : '1px solid var(--border, rgba(255,255,255,0.06))',
                   fontFamily: 'var(--font-mono, "JetBrains Mono", monospace)',
-                  color: 'var(--muted)',
+                  color: totalSpend > budgetLimit ? '#f87171' : 'var(--muted)',
                   transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                 }}
               >
-                <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
-                  <path
-                    d="M8 1v14M5 4h4a2 2 0 010 4H5M5 8h5a2 2 0 010 4H5"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                <span className="hidden lg:inline">Budget</span>
-                <span className="font-semibold" style={{ color: 'var(--accent)' }}>
-                  ¥{perDay.toLocaleString()}/day
-                </span>
+                {totalSpend > budgetLimit ? (
+                  <span className="flex items-center gap-1 text-rose-400 font-bold">
+                    <span>⚠️</span>
+                    <span>Exceeded by {currencySymbol}{(totalSpend - budgetLimit).toLocaleString()}</span>
+                  </span>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+                      <path
+                        d="M8 1v14M5 4h4a2 2 0 010 4H5M5 8h5a2 2 0 010 4H5"
+                        stroke="currentColor"
+                        strokeWidth="1.3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span className="hidden lg:inline">Budget</span>
+                    <span className="font-semibold" style={{ color: 'var(--accent)' }}>
+                      {currencySymbol}{perDay.toLocaleString()}/day
+                    </span>
+                  </>
+                )}
               </button>
 
               {/* Budget Breakdown Dropdown */}
@@ -208,12 +222,24 @@ export default function TopBar() {
                   </div>
 
                   {/* Progress Bar */}
-                  <div className="h-1.5 w-full rounded-full overflow-hidden mb-4" style={{ background: 'var(--surface-3, rgba(255,255,255,0.06))' }}>
+                  <div className="h-1.5 w-full rounded-full overflow-hidden mb-3" style={{ background: 'var(--surface-3, rgba(255,255,255,0.06))' }}>
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${budgetColorClass}`}
                       style={{ width: `${percentage}%` }}
                     ></div>
                   </div>
+
+                  {totalSpend > budgetLimit && (
+                    <div className="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[10px] font-semibold flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <span>⚠️</span>
+                        <span>Over Budget</span>
+                      </span>
+                      <span className="font-mono font-bold">
+                        +{currencySymbol}{(totalSpend - budgetLimit).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Expense Breakdown List */}
                   <div className="space-y-2.5 font-mono text-[10px]">
@@ -222,13 +248,13 @@ export default function TopBar() {
                         <span className="flex items-center gap-1.5" style={{ color: 'var(--muted)' }}>
                           <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: item.color }}></span> {item.name}
                         </span>
-                        <span style={{ color: 'var(--text)' }}>¥{item.amount.toLocaleString()}</span>
+                        <span style={{ color: 'var(--text)' }}>{currencySymbol}{item.amount.toLocaleString()}</span>
                       </div>
                     ))}
                     <div className="h-[1px] my-1" style={{ background: 'var(--border, rgba(255,255,255,0.06))' }}></div>
                     <div className="flex justify-between font-bold text-xs pt-0.5" style={{ color: 'var(--text)' }}>
                       <span>Total</span>
-                      <span className={budgetTextColorClass}>¥{totalSpend.toLocaleString()}</span>
+                      <span className={budgetTextColorClass}>{currencySymbol}{totalSpend.toLocaleString()}</span>
                     </div>
                   </div>
                 </div>

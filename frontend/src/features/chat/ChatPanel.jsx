@@ -44,29 +44,50 @@ const INTERVIEW_FLOW = [
   }
 ];
 
+function formatChatMessageContent(content) {
+  if (!content) return '';
+  if (/<[a-z][\s\S]*>/i.test(content)) {
+    return content.replace(/\*/g, '');
+  }
+  return content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*/g, '')
+    .replace(/\n\n/g, '<br/><br/>')
+    .replace(/\n/g, '<br/>');
+}
+
 export default function ChatPanel() {
   const { state, dispatch } = useTrip();
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef(null);
   const [isMicRecording, setIsMicRecording] = useState(false);
+  const isSendingRef = useRef(false);
+  const recognitionRef = useRef(null);
 
   // Auto-scroll to bottom of messages
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 60);
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [state.trip?.messages, isTyping, isMicRecording]);
+  }, [state.trip?.messages?.length, isTyping, isMicRecording]);
 
   // Main API Caller for Chat
   const sendMessageToAI = async (updatedMessages, currentTrip) => {
+    if (isSendingRef.current) return;
+    isSendingRef.current = true;
     setIsTyping(true);
+
     let success = false;
     let attempt = 0;
 
-    while (!success && attempt < 20) {
+    while (!success && attempt < 5) {
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -116,23 +137,24 @@ export default function ChatPanel() {
       } catch (error) {
         console.error('NIM Chat error:', error);
         attempt++;
-        if (attempt >= 20) {
+        if (attempt >= 5) {
           dispatch({
             type: 'ADD_MESSAGE',
             payload: {
               id: `ai-err-${Date.now()}`,
               role: 'assistant',
-              content: 'Sorry, I couldn\'t connect to the AI planning service. Please check your backend server logs or try again.',
+              content: 'Sorry, I couldn\'t connect to the AI planning service. Please try sending your request again.',
               timestamp: new Date().toISOString()
             }
           });
         } else {
-          // Wait 2 seconds before retrying
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Wait 1.5 seconds before retrying
+          await new Promise(resolve => setTimeout(resolve, 1500));
         }
       }
     }
     setIsTyping(false);
+    isSendingRef.current = false;
   };
 
   // Watch for entering interview mode with only user's initial prompt
@@ -140,30 +162,56 @@ export default function ChatPanel() {
     if (!state.isInterviewMode) return;
 
     const messages = state.trip?.messages || [];
-    if (messages.length === 1 && messages[0].role === 'user') {
+    if (messages.length === 1 && messages[0].role === 'user' && !isSendingRef.current) {
       sendMessageToAI(messages, null);
     }
   }, [state.isInterviewMode, state.trip?.messages?.length]);
 
   const toggleMic = () => {
     if (isMicRecording) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
       setIsMicRecording(false);
       return;
     }
-    setIsMicRecording(true);
-    // Simulate speaking for 3 seconds, then submit voice query
-    setTimeout(() => {
-      setIsMicRecording(prev => {
-        if (prev) {
-          handleSendMessage("Suggest cheaper lodging");
-        }
-        return false;
-      });
-    }, 3000);
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsMicRecording(true);
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map(result => result[0].transcript)
+          .join('');
+        setInputValue(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsMicRecording(false);
+      };
+
+      recognition.onend = () => {
+        setIsMicRecording(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } else {
+      alert('Speech recognition is not supported in this browser. Please type your message.');
+    }
   };
 
   const handleSendMessage = (text) => {
-    if (!text.trim()) return;
+    if (!text.trim() || isTyping || isSendingRef.current) return;
 
     // Clean user message text of any star signs/asterisks
     const cleanedText = text.replace(/\*/g, '');
@@ -259,7 +307,7 @@ export default function ChatPanel() {
               )}
               <div
                 className="max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: msg.content }}
+                dangerouslySetInnerHTML={{ __html: formatChatMessageContent(msg.content) }}
                 style={
                   isUser
                     ? {
@@ -350,14 +398,16 @@ export default function ChatPanel() {
         ).map((reply, idx) => (
           <button
             key={idx}
+            disabled={isTyping}
             onClick={() => handleSendMessage(reply.text)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[9px] font-medium cursor-pointer shrink-0 transition-all"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[9px] font-medium cursor-pointer shrink-0 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: 'var(--surface-3)',
               border: '1px solid var(--border)',
               color: 'var(--muted)'
             }}
             onMouseEnter={(e) => {
+              if (isTyping) return;
               e.currentTarget.style.borderColor = 'var(--accent-border)';
               e.currentTarget.style.color = 'var(--text)';
             }}
@@ -385,20 +435,34 @@ export default function ChatPanel() {
         }}
       >
         <div className="flex-1 relative">
-          <input
-            type="text"
+          <textarea
+            rows={1}
+            disabled={isTyping}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage(inputValue);
+              }
+            }}
             placeholder={state.isInterviewMode ? "Type your answer..." : "Ask AI to edit or optimize..."}
-            className="w-full pl-3.5 pr-9 py-2.5 rounded-xl text-xs focus:outline-none placeholder-muted/50 font-sans"
+            className="w-full pl-3.5 pr-9 py-2.5 rounded-xl text-xs focus:outline-none placeholder-muted/50 font-sans resize-none max-h-32 min-h-[38px] overflow-y-auto block leading-normal disabled:opacity-50"
             style={{
               background: 'var(--surface-2)',
               border: '1px solid var(--border)',
               color: 'var(--text)'
             }}
+            ref={(el) => {
+              if (el) {
+                el.style.height = 'auto';
+                el.style.height = `${Math.min(Math.max(el.scrollHeight, 38), 128)}px`;
+              }
+            }}
           />
           <button
             type="button"
+            disabled={isTyping}
             onClick={toggleMic}
             className={`absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors cursor-pointer p-1 rounded ${
               isMicRecording ? 'text-rose-500 animate-pulse bg-rose-500/10' : 'text-muted hover:text-text'
@@ -412,7 +476,7 @@ export default function ChatPanel() {
         </div>
         <button
           type="submit"
-          disabled={!inputValue.trim()}
+          disabled={!inputValue.trim() || isTyping}
           className="p-2.5 rounded-xl shadow-md disabled:opacity-30 disabled:shadow-none hover:bg-accent/85 transition-all transform active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
           style={{
             background: 'var(--accent)',

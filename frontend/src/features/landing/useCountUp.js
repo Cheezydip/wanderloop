@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
+import { animate, spring } from 'animejs';
 
 /**
- * Animated counter that counts from 0 → target when the element
- * enters the viewport. Respects prefers-reduced-motion.
+ * Animated counter that counts from 0 → target using Anime.js spring easing
+ * when the element enters the viewport. Respects prefers-reduced-motion.
  */
 export default function useCountUp(target, options = {}) {
-  const { duration = 2000, threshold = 0.3 } = options;
+  const { threshold = 0.3 } = options;
   const [value, setValue] = useState(0);
   const ref = useRef(null);
   const hasRun = useRef(false);
+  const animRef = useRef(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -30,31 +32,28 @@ export default function useCountUp(target, options = {}) {
           hasRun.current = true;
           observer.unobserve(el);
 
-          const startTime = performance.now();
-          const easeOutExpo = (t) =>
-            t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-
-          function tick(now) {
-            const elapsed = now - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const easedProgress = easeOutExpo(progress);
-
-            setValue(Math.round(easedProgress * target));
-
-            if (progress < 1) {
-              requestAnimationFrame(tick);
-            }
-          }
-
-          requestAnimationFrame(tick);
+          // Use Anime.js for spring-powered counter animation
+          const obj = { val: 0 };
+          animRef.current = animate(obj, {
+            val: target,
+            duration: 2000,
+            ease: spring({ stiffness: 80, damping: 10 }),
+            round: 1,
+            update: () => {
+              setValue(obj.val);
+            },
+          });
         }
       },
       { threshold }
     );
 
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [target, duration, threshold]);
+    return () => {
+      observer.disconnect();
+      if (animRef.current) animRef.current.pause();
+    };
+  }, [target, threshold]);
 
   return { ref, value };
 }

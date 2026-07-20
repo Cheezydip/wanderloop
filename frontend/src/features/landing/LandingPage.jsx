@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { useTrip } from '../../context/TripContext';
 import ThreeGlobe from './ThreeGlobe';
 import useScrollReveal, { useStaggerReveal } from './useScrollReveal';
 import useCountUp from './useCountUp';
+import { createTimeline, animate, stagger, spring, cubicBezier } from 'animejs';
 import {
   SkeletonCard,
   SkeletonMockup,
@@ -18,6 +19,78 @@ import {
    ═══════════════════════════════════════════════════ */
 
 /* ─── SVG Icon Helpers ─── */
+/* ─── Anime.js Hero Entrance Timeline ─── */
+function useAnimeHero(sectionsLoaded) {
+  const hasRun = useRef(false);
+
+  useEffect(() => {
+    if (!sectionsLoaded || hasRun.current) return;
+    hasRun.current = true;
+
+    // Use a short delay to ensure DOM is ready
+    setTimeout(() => {
+      const tl = createTimeline({
+        ease: cubicBezier(0.16, 1, 0.3, 1),
+      });
+      tl.add('.landing-hero-badge', {
+        translateY: [20, 0],
+        opacity: [0, 1],
+        duration: 800,
+        ease: spring({ stiffness: 80, damping: 10 }),
+      })
+      .add('.landing-hero-title', {
+        translateY: [40, 0],
+        opacity: [0, 1],
+        duration: 1000,
+        ease: spring({ stiffness: 70, damping: 12 }),
+      }, '-=600')
+      .add('.landing-hero-sub', {
+        translateY: [20, 0],
+        opacity: [0, 1],
+        duration: 800,
+        ease: spring({ stiffness: 80, damping: 10 }),
+      }, '-=700')
+      .add('.landing-hero-search', {
+        translateY: [16, 0],
+        opacity: [0, 1],
+        duration: 700,
+        ease: spring({ stiffness: 90, damping: 8 }),
+      }, '-=500')
+      .add('.landing-hero-chips button', {
+        translateY: [12, 0],
+        opacity: [0, 1],
+        delay: stagger(80, { from: 'center' }),
+        duration: 500,
+        ease: spring({ stiffness: 100, damping: 6 }),
+      }, '-=400')
+      .add('.landing-hero-stats', {
+        translateY: [20, 0],
+        opacity: [0, 1],
+        duration: 600,
+        ease: spring({ stiffness: 80, damping: 10 }),
+      }, '-=300');
+    }, 100);
+  }, [sectionsLoaded]);
+}
+
+/* ─── Anime.js Stagger for Bento Cards ─── */
+function useAnimeStagger(ref, active) {
+  useEffect(() => {
+    if (!active || !ref.current) return;
+
+    const children = ref.current.children;
+    if (!children.length) return;
+
+    animate(children, {
+      translateY: [40, 0],
+      opacity: [0, 1],
+      delay: stagger(100, { from: 'first', ease: 'outQuad' }),
+      duration: 700,
+      ease: spring({ stiffness: 80, damping: 10 }),
+    });
+  }, [active, ref]);
+}
+
 const GlobeIcon = ({ size = 18, className = '' }) => (
   <svg
     viewBox="0 0 24 24"
@@ -161,6 +234,21 @@ export default function LandingPage() {
   const [showLoader, setShowLoader] = useState(true);
   const [loaderMessage, setLoaderMessage] = useState('initializing itinerary engine...');
   const [loaderProgress, setLoaderProgress] = useState(0);
+
+  const bentoRef = useRef(null);
+  const heroTextareaRef = useRef(null);
+
+  // Auto-expand hero prompt textarea downwards as content grows
+  useEffect(() => {
+    if (heroTextareaRef.current) {
+      heroTextareaRef.current.style.height = 'auto';
+      heroTextareaRef.current.style.height = `${Math.min(Math.max(heroTextareaRef.current.scrollHeight, 58), 240)}px`;
+    }
+  }, [inputValue]);
+
+  /* Anime.js orchestrations */
+  useAnimeHero(sectionsLoaded);
+  useAnimeStagger(bentoRef, sectionsLoaded);
 
   /* Scroll refs */
   const featuresHeaderRef = useScrollReveal();
@@ -436,6 +524,9 @@ export default function LandingPage() {
         scrollBehavior: 'smooth',
       }}
     >
+      {/* ═══ GRAIN TEXTURE OVERLAY ═══ */}
+      <div className="landing-grain" aria-hidden="true" />
+
       {/* ═══ LOADER OVERLAY ═══ */}
       {showLoader && (
         <div className={`landing-loader-overlay ${!isLoading ? 'fading-out' : ''}`}>
@@ -558,13 +649,20 @@ export default function LandingPage() {
                 <path d="M14 14l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             </span>
-            <input
+            <textarea
               id="landing-hero-input"
-              type="text"
+              ref={heroTextareaRef}
+              rows={1}
               className="landing-search-input"
               placeholder="5 days in Japan, love street food, budget $80/day..."
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
               aria-label="Describe your trip"
             />
             <button
@@ -613,7 +711,7 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="landing-bento-grid" ref={bentoGridRef}>
+          <div className="landing-bento-grid" ref={bentoRef} data-stagger="true">
             {features.map((f, idx) => (
               <BentoCard
                 key={idx}

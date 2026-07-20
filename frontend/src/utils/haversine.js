@@ -24,7 +24,8 @@ export function haversine(lat1, lng1, lat2, lng2) {
  *   ≥ 30 km → "Xh shinkansen"
  */
 export function getTravelLabel(distKm) {
-  if (distKm < 5) return 'walk';
-  if (distKm < 30) return `${Math.round(distKm / 0.6)}min train`;
-  return `${Math.round(distKm / 250)}h shinkansen`;
+  if (distKm < 1.5) return `${Math.max(1, Math.round(distKm / 0.08))}min walk`;
+  if (distKm < 15) return `${Math.max(1, Math.round(distKm / 0.5))}min drive`;
+  if (distKm < 100) return `${Math.round(distKm / 0.8)}min train`;
+  return `${Math.max(1, Math.round(distKm / 250))}h train`;
 }

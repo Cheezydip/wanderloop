@@ -4,6 +4,7 @@
  */
 
 (async () => {
+    if (typeof window === 'undefined') return;
     // Create PixiJS application
     const app = new PIXI.Application();
 

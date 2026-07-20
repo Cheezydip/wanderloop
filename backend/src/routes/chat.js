@@ -45,20 +45,28 @@ A <TripObject> MUST strictly follow this structure:
   "id": "A unique trip ID string (e.g., 'trip-kyoto-3d')",
   "title": "A short, catchy title (e.g., 'Kyoto Sightseeing & Culture Tour')",
   "destination": "The name of the destination city/town/region (e.g., 'Manali', 'Paris', 'Tokyo')",
-  "budget": 30000, // Total budget in JPY or local currency as an integer
+  "currency": "INR", // Currency code matching the destination (e.g., 'INR' for India, 'EUR' for Paris/Europe, 'USD' for USA, 'GBP' for London, 'JPY' for Tokyo)
+  "currencySymbol": "₹", // Currency symbol (e.g. '₹' for India, '€' for France/Europe, '$' for USA, '£' for UK, '¥' for Japan)
+  "budget": 15000, // Total estimated trip budget in destination's local currency as an integer
+  "budgetItems": [ // Automatic budget breakdown items in local currency
+    { "name": "Accommodation", "amount": 7500, "color": "#2dd4bf" },
+    { "name": "Food & dining", "amount": 4000, "color": "#f59e0b" },
+    { "name": "Activities & entries", "amount": 2000, "color": "#f43f5e" },
+    { "name": "Local transport", "amount": 1500, "color": "#84cc16" }
+  ],
   "days": [
     {
-    "id": "day-1", // Unique day ID
+      "id": "day-1", // Unique day ID
       "dayNumber": 1, // 1-indexed day number
       "colorHue": "teal", // MUST be one of: 'teal', 'amber', 'violet', 'rose', 'lime'. Each day in a trip must have a UNIQUE colorHue.
       "stops": [
         {
           "id": "s1-1", // Unique stop ID
-          "name": "Senso-ji Temple", // Full name of the place
-          "lat": 35.7147, // Accurate latitude coordinate (float)
-          "lng": 139.7967, // Accurate longitude coordinate (float)
+          "name": "Hadimba Temple", // Full name of the place
+          "lat": 32.2476, // Accurate latitude coordinate (float)
+          "lng": 77.1818, // Accurate longitude coordinate (float)
           "timeEstimate": "09:00 AM - 11:00 AM", // Estimated time window
-          "costEstimate": 0, // Integer cost, 0 if free
+          "costEstimate": 50, // Integer cost in local currency, 0 if free
           "rationale": "One sentence explaining why this spot is perfect for their preferences.",
           "order": 1 // 1-indexed order of the stop in the day
         }
@@ -83,6 +91,7 @@ Behavior Guidelines:
     - New York: lat 40.7128, lng -74.0060
     - Kolkata: lat 22.5726, lng 88.3639
     - Manali: lat 32.2396, lng 77.1887
+- CRITICAL GEOGRAPHIC FEASIBILITY & ROUTE OPTIMIZATION: All stops scheduled for a single day MUST be physically clustered in the same city neighborhood or district within 2km to 12km max from one another. Never place stops across opposite ends of a giant metro area on the same day. Order stops sequentially along a logical continuous path so the user travels smoothly from Stop 1 -> Stop 2 -> Stop 3 without zigzagging or long 1-hour back-and-forth commutes across town.
 - Iterative Edits: If the user provides modifications (e.g. "remove Takeshita Street", "make Day 2 more relaxed", "add a sushi lunch on Day 1"), modify the TripObject accordingly, return the complete updated TripObject in the 'trip' field, explain the changes in the 'message', keep 'isComplete' as true, and optionally provide a new 'mapCenter' if the map needs to focus on a different area.
 `;
 
@@ -242,6 +251,22 @@ router.post('/chat', async (req, res) => {
         if (!Array.isArray(day.stops)) continue;
         for (const stop of day.stops) {
           try {
+            // Check if AI already provided realistic coordinates within 35km of destination center
+            if (
+              typeof stop.lat === 'number' &&
+              typeof stop.lng === 'number' &&
+              stop.lat !== 0 &&
+              stop.lng !== 0 &&
+              !isNaN(stop.lat) &&
+              !isNaN(stop.lng)
+            ) {
+              const distFromCenter = haversineKm(centerLat, centerLng, stop.lat, stop.lng);
+              if (distFromCenter <= 35) {
+                // Coordinates provided by AI are accurate for this city, skip expensive external lookup
+                continue;
+              }
+            }
+
             const cleanQuery = cleanQueryForGeocoding(stop.name);
             const cacheKey = `${cleanQuery.toLowerCase().trim()}_${centerLat.toFixed(3)}_${centerLng.toFixed(3)}`;
             if (chatGeocodeCache.has(cacheKey)) {
@@ -264,26 +289,13 @@ router.post('/chat', async (req, res) => {
               coords = await fetchCoords(url);
             }
 
-            // Attempt 3: If still fails, try clean query + cityName without bounding box restrictions
-            if (!coords && cityName) {
-              const queryWithCity = `${cleanQuery}, ${cityName}`;
-              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryWithCity)}&format=geojson&limit=1`;
-              coords = await fetchCoords(url);
-            }
-
-            // Attempt 4: Last fallback, query original name in viewbox
-            if (!coords) {
-              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(stop.name)}&format=geojson&limit=1&viewbox=${viewbox}&bounded=1`;
-              coords = await fetchCoords(url);
-            }
-
             if (coords) {
               stop.lng = coords.lng;
               stop.lat = coords.lat;
               chatGeocodeCache.set(cacheKey, { lng: coords.lng, lat: coords.lat });
             }
 
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Respect limits
+            await new Promise(resolve => setTimeout(resolve, 150)); // Fast rate limit pause
           } catch (err) {
             console.error('Failed to geocode stop:', stop.name, err);
           }
@@ -291,10 +303,9 @@ router.post('/chat', async (req, res) => {
       }
     }
 
-    // POST-PROCESSING: Remove outlier stops that are too far from the day's centroid
-    // This catches cases where the AI places a stop 100-170km away from other stops in the same day
+    // POST-PROCESSING: Remove outlier stops & reorder stops by geographic nearest-neighbor feasibility
     if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
-      const MAX_DISTANCE_KM = 30; // Max allowed distance from day centroid
+      const MAX_DISTANCE_KM = 20; // Max allowed distance from day centroid (tightened for feasibility)
 
       for (const day of jsonResponse.trip.days) {
         if (!Array.isArray(day.stops) || day.stops.length < 2) continue;
@@ -319,10 +330,10 @@ router.post('/chat', async (req, res) => {
 
         if (removedStops.length > 0) {
           console.log(`[server]: Removed ${removedStops.length} outlier stop(s) from ${day.id}: ${removedStops.map(s => `${s.name} (${s.distance}km)`).join(', ')}`);
-          day.stops = validStops;
-          // Re-index order
-          day.stops.forEach((s, i) => { s.order = i + 1; });
         }
+
+        // Re-order remaining stops sequentially along minimum geographic route
+        day.stops = optimizeDayStopsRoute(validStops);
       }
     }
 
@@ -368,6 +379,44 @@ function cleanQueryForGeocoding(name) {
   query = query.replace(/\b(sightseeing|tour|visit|explore|view|sunset view|sunrise view|shopping|lunch|dinner|breakfast|cafe|restaurant|hotel|stay|resort|hills|mountains|market|local market)\b/gi, '').trim();
   // If the query becomes too empty, fall back to the original name
   return query.length > 2 ? query : name;
+}
+
+// Nearest-neighbor route optimization for stops within a day
+function optimizeDayStopsRoute(stops) {
+  if (!Array.isArray(stops) || stops.length < 2) return stops;
+
+  const unvisited = [...stops];
+  const ordered = [unvisited.shift()];
+
+  while (unvisited.length > 0) {
+    const last = ordered[ordered.length - 1];
+    let nearestIdx = 0;
+    let minDist = Infinity;
+
+    for (let i = 0; i < unvisited.length; i++) {
+      const dist = haversineKm(last.lat, last.lng, unvisited[i].lat, unvisited[i].lng);
+      if (dist < minDist) {
+        minDist = dist;
+        nearestIdx = i;
+      }
+    }
+
+    ordered.push(unvisited.splice(nearestIdx, 1)[0]);
+  }
+
+  const TIME_SLOTS = [
+    '09:00 AM - 11:30 AM',
+    '12:00 PM - 02:30 PM',
+    '03:00 PM - 05:30 PM',
+    '06:00 PM - 08:30 PM',
+    '09:00 PM - 10:30 PM'
+  ];
+
+  return ordered.map((s, idx) => ({
+    ...s,
+    order: idx + 1,
+    timeEstimate: s.timeEstimate || TIME_SLOTS[Math.min(idx, TIME_SLOTS.length - 1)]
+  }));
 }
 
 export default router;

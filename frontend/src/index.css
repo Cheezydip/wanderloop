@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@fontsource-variable/bricolage-grotesque";
 
 @theme {
   --color-bg: var(--bg);
@@ -13,9 +14,9 @@
   --color-day-4: var(--day-4);
   --color-day-5: var(--day-5);
 
-  --font-sans: "Sora", "Inter", system-ui, -apple-system, sans-serif;
+  --font-sans: "Bricolage Grotesque", "Sora", "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
-  --font-display: "Sora", system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", system-ui, sans-serif;
 }
 
 :root,

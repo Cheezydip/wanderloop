@@ -5,6 +5,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { getDayColorHex } from '../../utils/colors';
 import { haversine, getTravelLabel } from '../../utils/haversine';
 import { fetchRoute } from '../../utils/routeService';
+import { getCurrencySymbol, estimateStopCost } from '../../utils/currency';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -46,6 +47,7 @@ const getCartoStyle = (theme) => {
 export default function MapPanel() {
   const { state, dispatch } = useTrip();
   const { theme } = useTheme();
+  const currencySymbol = getCurrencySymbol(state.trip);
   const mapContainerRef = useRef(null);
   const [mapError, setMapError] = useState(null);
   const mapRef = useRef(null);
@@ -572,6 +574,44 @@ export default function MapPanel() {
     }
   }, [useMockMap, dispatch]);
 
+  // Re-sync map when the container becomes visible again (e.g. mobile tab switch, layout change)
+  useEffect(() => {
+    const container = mapContainerRef.current;
+    if (!container || useMockMap) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry && entry.isIntersecting && mapRef.current) {
+          // Container just became visible — resize map and re-draw markers
+          mapRef.current.resize();
+          if (syncMapDataRef.current) {
+            syncMapDataRef.current();
+          }
+        }
+      },
+      { threshold: 0.01 }
+    );
+
+    observer.observe(container);
+
+    // Also handle page-level visibility changes (browser tab switch)
+    const handleVisibility = () => {
+      if (!document.hidden && mapRef.current) {
+        mapRef.current.resize();
+        if (syncMapDataRef.current) {
+          syncMapDataRef.current();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [useMockMap]);
+
   // Update map style dynamically on theme changes
   useEffect(() => {
     if (mapRef.current && !useMockMap) {
@@ -720,7 +760,7 @@ export default function MapPanel() {
             lat: poi.lat,
             lng: poi.lng,
             timeEstimate: '01:00 PM - 02:00 PM',
-            costEstimate: 0,
+            costEstimate: estimateStopCost(poi, state.trip),
             rationale: `Added from nearby recommendations. Rated ${poi.rating} stars.`,
           };
 
@@ -986,13 +1026,18 @@ export default function MapPanel() {
               const routeData = routesData[day.id];
               if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.legs && routeData.features[0].properties.legs[i]) {
                 const leg = routeData.features[0].properties.legs[i];
-                const distance = leg.distance;
-                const duration = leg.duration;
-                const mins = Math.round(duration / 60);
-                if (distance < 1000) {
-                  travelTime = `${Math.round(distance)}m (${mins}min)`;
+                const distance = leg.distance; // in meters
+                const distStr = distance < 1000 ? `${Math.round(distance)}m` : `${(distance / 1000).toFixed(1)}km`;
+                
+                if (distance < 1500) {
+                  const mins = Math.round(leg.duration / 60);
+                  travelTime = `🚶 ${distStr} (${mins}min)`;
+                } else if (distance < 15000) {
+                  const driveMins = Math.max(1, Math.round(distance / 500));
+                  travelTime = `🚗 ${distStr} (${driveMins}min)`;
                 } else {
-                  travelTime = `${(distance / 1000).toFixed(1)}km (${mins}min)`;
+                  const trainMins = Math.max(1, Math.round(distance / 800));
+                  travelTime = `🚆 ${distStr} (${trainMins}min)`;
                 }
               } else {
                 const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
@@ -1031,7 +1076,7 @@ export default function MapPanel() {
                   <div class="popup-title" style="font-size: 14px; font-weight: 700; margin-bottom: 4px; padding-right: 18px;">${stop.name}</div>
                   <div class="popup-meta" style="display: flex; gap: 8px; font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
                     <span>${stop.timeEstimate || ''}</span>
-                    ${stop.costEstimate > 0 ? `<span>·</span><span>¥${stop.costEstimate.toLocaleString()}</span>` : '<span>·</span><span>Free</span>'}
+                    ${stop.costEstimate > 0 ? `<span>·</span><span>${currencySymbol}${stop.costEstimate.toLocaleString()}</span>` : '<span>·</span><span>Free</span>'}
                   </div>
                   <div class="popup-desc" style="font-size: 12px; line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${stop.rationale}</div>
                   <div style="display: flex; gap: 6px; margin-top: 10px;">
@@ -1139,7 +1184,7 @@ export default function MapPanel() {
                 <div class="popup-meta" style="display: flex; gap: 8px; font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
                   <span>★ ${home.rating}</span>
                   <span>·</span>
-                  <span>¥${home.pricePerNight.toLocaleString()}/night</span>
+                  <span>${currencySymbol}${home.pricePerNight.toLocaleString()}/night</span>
                   <span>·</span>
                   <span>${home.avgCommuteMinutes}min avg</span>
                 </div>
@@ -1232,12 +1277,15 @@ export default function MapPanel() {
         syncMapData();
       } else {
         map.once('styledata', handleSync);
+        // Fallback: if 'styledata' was already emitted, 'idle' will fire once rendering finishes
+        map.once('idle', handleSync);
       }
     }
 
     return () => {
       if (map) {
         map.off('styledata', handleSync);
+        map.off('idle', handleSync);
       }
       markersRef.current.forEach(m => m.remove());
       markersRef.current = [];
@@ -1359,13 +1407,18 @@ export default function MapPanel() {
                   const routeData = routesData[day.id];
                   if (routeData && routeData.features && routeData.features[0] && routeData.features[0].properties.legs && routeData.features[0].properties.legs[i]) {
                     const leg = routeData.features[0].properties.legs[i];
-                    const distance = leg.distance;
-                    const duration = leg.duration;
-                    const mins = Math.round(duration / 60);
-                    if (distance < 1000) {
-                      label = `${Math.round(distance)}m (${mins}min)`;
+                    const distance = leg.distance; // in meters
+                    const distStr = distance < 1000 ? `${Math.round(distance)}m` : `${(distance / 1000).toFixed(1)}km`;
+                    
+                    if (distance < 1500) {
+                      const mins = Math.round(leg.duration / 60);
+                      label = `🚶 ${distStr} (${mins}min)`;
+                    } else if (distance < 15000) {
+                      const driveMins = Math.max(1, Math.round(distance / 500));
+                      label = `🚗 ${distStr} (${driveMins}min)`;
                     } else {
-                      label = `${(distance / 1000).toFixed(1)}km (${mins}min)`;
+                      const trainMins = Math.max(1, Math.round(distance / 800));
+                      label = `🚆 ${distStr} (${trainMins}min)`;
                     }
                   } else {
                     const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
@@ -1481,7 +1534,7 @@ export default function MapPanel() {
                           </text>
                         </g>
                       )}
-                      <title>{home.name} — ★{home.rating} — ¥{home.pricePerNight.toLocaleString()}/night</title>
+                      <title>{home.name} — ★{home.rating} — {currencySymbol}{home.pricePerNight.toLocaleString()}/night</title>
                     </g>
                   );
                 })}
@@ -1545,7 +1598,7 @@ export default function MapPanel() {
                       <span>{activeStop.timeEstimate}</span>
                       <span>·</span>
                       <span style={{ color }}>
-                        {activeStop.costEstimate === 0 ? 'Free' : `¥${activeStop.costEstimate.toLocaleString()}`}
+                        {activeStop.costEstimate === 0 ? 'Free' : `${currencySymbol}${activeStop.costEstimate.toLocaleString()}`}
                       </span>
                     </div>
                     <div className="rounded-lg p-2 mb-2" style={{ background: 'var(--surface-2)', borderTop: '1px solid var(--border)' }}>
@@ -1621,7 +1674,7 @@ export default function MapPanel() {
                     </div>
                     <div className="flex items-center gap-3 mb-2.5">
                       <span className="font-mono text-sm font-bold" style={{ color: 'var(--text)' }}>
-                        ¥{home.pricePerNight.toLocaleString()}
+                        {currencySymbol}{home.pricePerNight.toLocaleString()}
                         <span className="text-[8px] font-normal" style={{ color: 'var(--muted)' }}> /night</span>
                       </span>
                       <span className="text-[9px] font-mono flex items-center gap-0.5" style={{ color: 'var(--accent)' }}>
@@ -1717,7 +1770,7 @@ export default function MapPanel() {
                           lat: poi.lat,
                           lng: poi.lng,
                           timeEstimate: '01:00 PM - 02:00 PM',
-                          costEstimate: 0,
+                          costEstimate: estimateStopCost(poi, state.trip),
                           rationale: `Added from nearby recommendations. Rated ${poi.rating} stars.`,
                         };
                         dispatch({ type: 'ADD_STOP', payload: { dayId: targetDayId, stop: newStop } });

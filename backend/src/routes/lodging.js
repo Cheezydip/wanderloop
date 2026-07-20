@@ -155,7 +155,14 @@ async function fetchFoursquareLodgings(lat, lng, radius) {
     const elLat = place.geocodes?.main?.latitude || lat;
     const elLng = place.geocodes?.main?.longitude || lng;
     const distKm = haversineDistance(lat, lng, elLat, elLng);
-    const walkMinutes = Math.max(1, Math.round(distKm / 0.08));
+    let commuteMinutes = 0;
+    if (distKm < 1.5) {
+      commuteMinutes = Math.max(1, Math.round(distKm / 0.08)); // Walk
+    } else if (distKm < 15) {
+      commuteMinutes = Math.max(1, Math.round(distKm / 0.5)); // Drive
+    } else {
+      commuteMinutes = Math.max(1, Math.round(distKm / 0.8)); // Train
+    }
 
     const pricePerNight = 6000 + (idx * 5000) + Math.floor(Math.random() * 3000);
 
@@ -168,7 +175,7 @@ async function fetchFoursquareLodgings(lat, lng, radius) {
       rating: parseFloat((4.0 + Math.random() * 0.8).toFixed(1)),
       reviewCount: Math.floor(25 + Math.random() * 180),
       amenities: ['Free Wi-Fi', 'Breakfast', 'Air Conditioning', 'Luggage Storage'],
-      avgCommuteMinutes: walkMinutes,
+      avgCommuteMinutes: commuteMinutes,
       rationale: `Real hotel found via Foursquare ${distKm.toFixed(1)}km from your planned stops.`
     };
   });
@@ -188,9 +195,16 @@ function formatLodging(el, index, queryLat, queryLng) {
   // Extract amenities from OSM tags
   const amenities = extractAmenities(tags);
 
-  // Rough commute estimate (haversine distance -> minutes walking at ~5km/h)
+  // Rough commute estimate (haversine distance -> realistic travel time)
   const distKm = haversineDistance(queryLat, queryLng, elLat, elLng);
-  const walkMinutes = Math.max(1, Math.round(distKm / 0.08));
+  let commuteMinutes = 0;
+  if (distKm < 1.5) {
+    commuteMinutes = Math.max(1, Math.round(distKm / 0.08)); // Walk
+  } else if (distKm < 15) {
+    commuteMinutes = Math.max(1, Math.round(distKm / 0.5)); // Drive
+  } else {
+    commuteMinutes = Math.max(1, Math.round(distKm / 0.8)); // Train
+  }
 
   return {
     id: `lodging-osm-${el.id}`,
@@ -203,7 +217,7 @@ function formatLodging(el, index, queryLat, queryLng) {
       : parseFloat((3.8 + Math.random() * 1.0).toFixed(1)),
     reviewCount: Math.floor(20 + Math.random() * 280),
     amenities,
-    avgCommuteMinutes: walkMinutes,
+    avgCommuteMinutes: commuteMinutes,
     rationale: `Real ${tags.tourism?.replace('_', ' ') || 'hotel'} found ${distKm.toFixed(1)}km from your planned stops.`
   };
 }
@@ -351,7 +365,14 @@ async function fetchGeoapifyLodgings(lat, lng, radius) {
     const elLat = props.lat;
     const elLng = props.lon;
     const distKm = haversineDistance(lat, lng, elLat, elLng);
-    const walkMinutes = Math.max(1, Math.round(distKm / 0.08));
+    let commuteMinutes = 0;
+    if (distKm < 1.5) {
+      commuteMinutes = Math.max(1, Math.round(distKm / 0.08)); // Walk
+    } else if (distKm < 15) {
+      commuteMinutes = Math.max(1, Math.round(distKm / 0.5)); // Drive
+    } else {
+      commuteMinutes = Math.max(1, Math.round(distKm / 0.8)); // Train
+    }
 
     const pricePerNight = 4000 + (idx * 2500) + Math.floor(Math.random() * 2000);
 
@@ -364,7 +385,7 @@ async function fetchGeoapifyLodgings(lat, lng, radius) {
       rating: parseFloat((4.0 + Math.random() * 0.8).toFixed(1)),
       reviewCount: Math.floor(20 + Math.random() * 200),
       amenities: ['Free Wi-Fi', 'Breakfast', 'Air Conditioning', 'Luggage Storage'],
-      avgCommuteMinutes: walkMinutes,
+      avgCommuteMinutes: commuteMinutes,
       rationale: `Real accommodation found via Geoapify ${distKm.toFixed(1)}km from your planned stops.`
     };
   });
