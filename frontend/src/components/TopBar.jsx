@@ -1,18 +1,23 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTrip } from '../context/TripContext';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { getCurrencySymbol } from '../utils/currency';
 import ExportModal from './ExportModal';
-import { AlertTriangle } from 'lucide-react';
+import SavedTripsModal from './SavedTripsModal';
+import UserProfileDropdown from './UserProfileDropdown';
+import { AlertTriangle, Cloud, User, LogOut, LogIn, UserPlus } from 'lucide-react';
 
 export default function TopBar() {
   const { state, dispatch } = useTrip();
   const { theme, setTheme } = useTheme();
+  const { user, logout, openAuthModal } = useAuth();
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false);
   const [isEditingBudget, setIsEditingBudget] = useState(false);
   const [tempBudget, setTempBudget] = useState(state.trip?.budget || 25000);
   const [saveText, setSaveText] = useState('Save');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isSavedTripsOpen, setIsSavedTripsOpen] = useState(false);
   const budgetRef = useRef(null);
 
   useEffect(() => {
@@ -54,17 +59,39 @@ export default function TopBar() {
     setIsEditingBudget(false);
   };
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     setSaveText('Saved ✓');
     setIsExportModalOpen(true);
+
+    if (user && state.trip) {
+      try {
+        await fetch('/api/trips', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tripId: state.trip.id,
+            title: state.trip.title,
+            budget: state.trip.budget,
+            currency: state.trip.currency || 'JPY',
+            days: state.trip.days,
+            budgetItems: state.budgetItems,
+            selectedHomestaysByDay: state.selectedHomestaysByDay,
+            selectedHomestayId: state.selectedHomestayId,
+          }),
+        });
+      } catch (err) {
+        console.error('Failed to sync trip to MongoDB Atlas:', err);
+      }
+    }
+
     setTimeout(() => setSaveText('Save'), 2500);
-  }, []);
+  }, [user, state.trip, state.budgetItems, state.selectedHomestaysByDay, state.selectedHomestayId]);
 
   const perDay = numDays > 0 ? Math.round(totalSpend / numDays) : 0;
 
   return (
     <header
-      className="h-14 flex items-center justify-between px-5 shrink-0 z-30 relative"
+      className="h-14 flex items-center justify-between px-5 shrink-0 z-50 relative overflow-visible"
       style={{
         background: 'var(--surface)',
         borderBottom: '1px solid var(--border, rgba(255,255,255,0.06))',
@@ -342,6 +369,55 @@ export default function TopBar() {
           </>
         )}
 
+        {/* ─── User Authentication & Cloud Trips Controls ─── */}
+        {user ? (
+          <div className="flex items-center gap-2 pl-1 border-l" style={{ borderColor: 'var(--border, rgba(255,255,255,0.06))' }}>
+            <button
+              onClick={() => setIsSavedTripsOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-[6px] rounded-lg text-xs font-semibold cursor-pointer border transition-all hover:border-emerald-500/40 hover:text-emerald-400"
+              style={{
+                background: 'var(--surface-2, rgba(255,255,255,0.03))',
+                borderColor: 'var(--border, rgba(255,255,255,0.06))',
+                color: 'var(--text)',
+              }}
+              title="View all your saved trips"
+            >
+              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">My Trips</span>
+            </button>
+
+            {/* Rich Interactive User Profile Dropdown Menu */}
+            <UserProfileDropdown onOpenSavedTrips={() => setIsSavedTripsOpen(true)} />
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 pl-1 border-l" style={{ borderColor: 'var(--border, rgba(255,255,255,0.06))' }}>
+            <button
+              onClick={() => openAuthModal('login')}
+              className="flex items-center gap-1 px-3 py-[6px] rounded-lg text-xs font-semibold cursor-pointer border transition-colors hover:border-accent hover:text-accent"
+              style={{
+                background: 'var(--surface-2, rgba(255,255,255,0.03))',
+                borderColor: 'var(--border, rgba(255,255,255,0.06))',
+                color: 'var(--text)',
+              }}
+            >
+              <LogIn className="w-3.5 h-3.5 text-accent" />
+              <span>Log In</span>
+            </button>
+            <button
+              onClick={() => openAuthModal('signup')}
+              className="hidden sm:flex items-center gap-1 px-3 py-[6px] rounded-lg text-xs font-bold cursor-pointer transition-colors"
+              style={{
+                background: 'var(--accent)',
+                color: 'var(--bg)',
+                border: 'none',
+              }}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Sign Up</span>
+            </button>
+          </div>
+        )}
+
         {/* ─── Theme Switcher ─── */}
         <div
           className="flex items-center gap-[2px] p-[2px] rounded-lg"
@@ -412,6 +488,12 @@ export default function TopBar() {
         selectedHomestayId={state.selectedHomestayId}
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
+      />
+
+      {/* Saved Cloud Trips Drawer Modal */}
+      <SavedTripsModal
+        isOpen={isSavedTripsOpen}
+        onClose={() => setIsSavedTripsOpen(false)}
       />
     </header>
   );

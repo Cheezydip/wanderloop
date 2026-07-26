@@ -1,19 +1,26 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { connectDB } from './config/db.js';
 import healthRouter from './routes/health.js';
 import routingRouter from './routes/routing.js';
 import geocodingRouter from './routes/geocoding.js';
 import poiRouter from './routes/poi.js';
 import lodgingRouter from './routes/lodging.js';
 import chatRouter from './routes/chat.js';
+import authRouter from './routes/auth.js';
+import tripsRouter from './routes/trips.js';
 
 // Load environment variables from project root .env - triggers watch key reload
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../.env'), override: true });
+
+// Connect to MongoDB Atlas / Local Database
+connectDB();
 
 // Self-healing: Decode ORS_API_KEY if it is in Base64 JWT format
 let apiKey = process.env.ORS_API_KEY;
@@ -41,7 +48,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(cookieParser());
 
 // Routes
 app.use('/api', healthRouter);
@@ -50,6 +58,8 @@ app.use('/api', geocodingRouter);
 app.use('/api', poiRouter);
 app.use('/api', lodgingRouter);
 app.use('/api', chatRouter);
+app.use('/api', authRouter);
+app.use('/api', tripsRouter);
 
 app.listen(PORT, () => {
   console.log(`[server]: Wanderloop backend listening at http://localhost:${PORT}`);

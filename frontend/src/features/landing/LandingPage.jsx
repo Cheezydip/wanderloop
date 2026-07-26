@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { useTrip } from '../../context/TripContext';
+import { useAuth } from '../../context/AuthContext';
+import SavedTripsModal from '../../components/SavedTripsModal';
+import UserProfileDropdown from '../../components/UserProfileDropdown';
+import { Cloud, User, LogOut, LogIn, UserPlus } from 'lucide-react';
 import ThreeGlobe from './ThreeGlobe';
 import useScrollReveal, { useStaggerReveal } from './useScrollReveal';
 import useCountUp from './useCountUp';
@@ -227,11 +231,13 @@ function TestimonialCard({ text, name, role, avatarClass }) {
 export default function LandingPage() {
   const { theme, setTheme } = useTheme();
   const { dispatch } = useTrip();
+  const { user, logout, openAuthModal } = useAuth();
   const [inputValue, setInputValue] = useState('');
   const [navScrolled, setNavScrolled] = useState(false);
   const [sectionsLoaded, setSectionsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showLoader, setShowLoader] = useState(true);
+  const [isSavedTripsOpen, setIsSavedTripsOpen] = useState(false);
   const [loaderMessage, setLoaderMessage] = useState('initializing itinerary engine...');
   const [loaderProgress, setLoaderProgress] = useState(0);
 
@@ -570,7 +576,7 @@ export default function LandingPage() {
           <li><a href="#landing-testimonials">Reviews</a></li>
         </ul>
 
-        <div className="landing-nav-actions">
+        <div className="landing-nav-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button
             className="landing-theme-toggle"
             onClick={() => setTheme(theme === 'dark' ? 'sunset' : 'dark')}
@@ -587,7 +593,51 @@ export default function LandingPage() {
               </svg>
             )}
           </button>
-          <button className="landing-btn-primary" onClick={() => {
+
+          {user ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsSavedTripsOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border hover:border-emerald-400 hover:text-emerald-400"
+                style={{
+                  background: 'var(--surface-2, rgba(255,255,255,0.05))',
+                  borderColor: 'var(--border, rgba(255,255,255,0.08))',
+                  color: 'var(--text, #fff)',
+                }}
+                title="View all your cloud saved trips"
+              >
+                <Cloud className="w-4 h-4 text-emerald-400" />
+                <span>My Trips</span>
+              </button>
+
+              <UserProfileDropdown onOpenSavedTrips={() => setIsSavedTripsOpen(true)} />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => openAuthModal('login')}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border hover:border-emerald-400 hover:text-emerald-400"
+                style={{
+                  background: 'var(--surface-2, rgba(255,255,255,0.05))',
+                  borderColor: 'var(--border, rgba(255,255,255,0.08))',
+                  color: 'var(--text, #fff)',
+                }}
+              >
+                <LogIn className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Log In</span>
+              </button>
+
+              <button
+                onClick={() => openAuthModal('signup')}
+                className="landing-btn-primary flex items-center gap-1.5 px-3 py-2 text-xs font-bold"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Sign Up</span>
+              </button>
+            </div>
+          )}
+
+          <button className="landing-btn-primary hidden md:flex" onClick={() => {
             const hero = document.getElementById('landing-hero-input');
             if (hero) hero.focus();
           }}>
@@ -1029,6 +1079,12 @@ export default function LandingPage() {
           <span>Built with AI, for travelers.</span>
         </div>
       </footer>
+
+      {/* Saved Cloud Trips Modal */}
+      <SavedTripsModal
+        isOpen={isSavedTripsOpen}
+        onClose={() => setIsSavedTripsOpen(false)}
+      />
     </div>
   );
 }

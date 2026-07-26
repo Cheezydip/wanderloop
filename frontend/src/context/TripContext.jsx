@@ -496,6 +496,26 @@ function tripReducer(state, action) {
         budgetItems: DEFAULT_BUDGET_ITEMS,
       };
 
+    case 'RESTORE_TRIP': {
+      const loadedTrip = action.payload.trip;
+      const selectedHomestaysByDay = action.payload.selectedHomestaysByDay || {};
+      const selectedHomestayId = action.payload.selectedHomestayId || null;
+      const budgetItems = action.payload.budgetItems || syncBudgetItems(loadedTrip, state.homestays, selectedHomestaysByDay, selectedHomestayId);
+
+      return {
+        ...state,
+        trip: loadedTrip,
+        hasTrip: true,
+        showQuestionnaire: false,
+        questionnairePrompt: '',
+        isInterviewMode: false,
+        isGenerating: false,
+        selectedHomestaysByDay,
+        selectedHomestayId,
+        budgetItems,
+      };
+    }
+
     case 'LOAD_TRIP': {
       const prompt = (action.payload || '').toLowerCase();
       let selectedTrip = mockTrip;

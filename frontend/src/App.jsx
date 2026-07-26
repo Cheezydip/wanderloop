@@ -6,6 +6,7 @@ import MapPanel from './features/map/MapPanel';
 import ItineraryPanel from './features/itinerary/ItineraryPanel';
 import LandingPage from './features/landing/LandingPage';
 import QuestionnairePage from './features/questionnaire/QuestionnairePage';
+import AuthModal from './components/AuthModal';
 
 export default function App() {
   const { state, dispatch } = useTrip();
@@ -189,6 +190,9 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Authentication Modal (Login / Sign Up) */}
+      <AuthModal />
     </div>
   );
 }
