@@ -1,14 +1,15 @@
 /* eslint-disable react-hooks/purity */
 import { useState, useRef, useEffect } from 'react';
 import { useTrip } from '../../context/TripContext';
+import { Smile, Zap, DollarSign, Landmark, RefreshCw, Home, Calendar, Compass } from 'lucide-react';
 
 const PRESET_QUICK_REPLIES = [
-  { text: 'Relaxed pace', icon: '🧘' },
-  { text: 'Packed & adventurous', icon: '⚡' },
-  { text: 'Budget-focused', icon: '💰' },
-  { text: 'Add a museum', icon: '🏛️' },
-  { text: 'Re-optimize routes', icon: '🔄' },
-  { text: 'Suggest cheaper lodging', icon: '🏠' },
+  { text: 'Relaxed pace', icon: <Smile className="w-3 h-3 text-emerald-400" /> },
+  { text: 'Packed & adventurous', icon: <Zap className="w-3 h-3 text-amber-400" /> },
+  { text: 'Budget-focused', icon: <DollarSign className="w-3 h-3 text-teal-400" /> },
+  { text: 'Add a museum', icon: <Landmark className="w-3 h-3 text-purple-400" /> },
+  { text: 'Re-optimize routes', icon: <RefreshCw className="w-3 h-3 text-sky-400" /> },
+  { text: 'Suggest cheaper lodging', icon: <Home className="w-3 h-3 text-rose-400" /> },
 ];
 
 const INTERVIEW_FLOW = [
@@ -121,6 +122,8 @@ export default function ChatPanel() {
         // Update Itinerary State if returned
         if (data.trip) {
           dispatch({ type: 'SET_TRIP', payload: data.trip });
+          dispatch({ type: 'SET_INTERVIEW_MODE', payload: false });
+          dispatch({ type: 'SET_ACTIVE_TAB', payload: 'map' });
         } 
         
         if (data.mapCenter) {
@@ -128,9 +131,10 @@ export default function ChatPanel() {
           dispatch({ type: 'SET_MAP_CENTER', payload: data.mapCenter });
         }
 
-        // If Interview complete, turn off interview mode
-        if (data.isComplete) {
+        // If Interview complete or trip loaded, turn off interview mode
+        if (data.isComplete || data.trip) {
           dispatch({ type: 'SET_INTERVIEW_MODE', payload: false });
+          dispatch({ type: 'SET_ACTIVE_TAB', payload: 'map' });
         }
         
         success = true;
@@ -387,12 +391,12 @@ export default function ChatPanel() {
       >
         {(state.isInterviewMode
           ? [
-              { text: '3 days', icon: '📅' },
-              { text: '5 days', icon: '📅' },
-              { text: 'Relaxed pace', icon: '🧘' },
-              { text: 'Adventure focused', icon: '⚡' },
-              { text: 'Budget friendly', icon: '💰' },
-              { text: 'Kyoto Sightseeing', icon: '⛩️' }
+              { text: '3 days', icon: <Calendar className="w-3 h-3 text-sky-400" /> },
+              { text: '5 days', icon: <Calendar className="w-3 h-3 text-sky-400" /> },
+              { text: 'Relaxed pace', icon: <Smile className="w-3 h-3 text-emerald-400" /> },
+              { text: 'Adventure focused', icon: <Zap className="w-3 h-3 text-amber-400" /> },
+              { text: 'Budget friendly', icon: <DollarSign className="w-3 h-3 text-teal-400" /> },
+              { text: 'Kyoto Sightseeing', icon: <Compass className="w-3 h-3 text-purple-400" /> }
             ]
           : PRESET_QUICK_REPLIES
         ).map((reply, idx) => (

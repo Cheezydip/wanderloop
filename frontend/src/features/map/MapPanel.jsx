@@ -6,6 +6,7 @@ import { getDayColorHex } from '../../utils/colors';
 import { haversine, getTravelLabel } from '../../utils/haversine';
 import { fetchRoute } from '../../utils/routeService';
 import { getCurrencySymbol, estimateStopCost } from '../../utils/currency';
+import { getStopLabel } from '../../utils/stopUtils';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -144,6 +145,37 @@ export default function MapPanel() {
   // Homestay selected on map (for popover)
   const activeHomestayOnMap = state.homestays.find(h => h.id === state.activeHomestayOnMapId);
 
+  // Close all active popups helper
+  const handleCloseAllPopups = useCallback(() => {
+    if (popupRef.current) {
+      try {
+        popupRef.current.remove();
+      } catch (e) {
+        console.warn('Error removing popupRef:', e);
+      }
+      popupRef.current = null;
+    }
+    activePOIPopupRef.current = false;
+    setActivePoiOnMap(null);
+    setClosedPopupStopId(null);
+    setClosedPopupHomestayId(null);
+
+    dispatch({ type: 'SELECT_STOP', payload: null });
+    dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
+    dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
+  }, [dispatch]);
+
+  const hasActivePopup = useMemo(() => {
+    return Boolean(
+      popupRef.current ||
+      state.activeStopId ||
+      state.activeHomestayOnMapId ||
+      activePoiOnMap ||
+      activePOIPopupRef.current ||
+      (state.nearbyPOIs && state.nearbyPOIs.length > 0)
+    );
+  }, [state.activeStopId, state.activeHomestayOnMapId, activePoiOnMap, state.nearbyPOIs]);
+
   // Compute which homestays should be visible based on the active day context
   const visibleHomestays = useMemo(() => {
     let filterDayId = highlightedDayId;
@@ -202,6 +234,44 @@ export default function MapPanel() {
     const y = SVG_H - ((lat - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * SVG_H;
     return { x, y };
   }, [bounds]);
+
+  // Calculate exact geographic midpoint along route geometry for leg labels
+  const getLegMidpoint = useCallback((s1, s2, routeData) => {
+    const p1Lat = parseFloat(s1.lat);
+    const p1Lng = parseFloat(s1.lng);
+    const p2Lat = parseFloat(s2.lat);
+    const p2Lng = parseFloat(s2.lng);
+
+    if (isNaN(p1Lat) || isNaN(p1Lng) || isNaN(p2Lat) || isNaN(p2Lng)) {
+      return { lat: p1Lat || 0, lng: p1Lng || 0 };
+    }
+
+    if (routeData?.features?.[0]?.geometry?.coordinates) {
+      const coords = routeData.features[0].geometry.coordinates; // [[lng, lat], ...]
+      if (coords.length >= 2) {
+        let idx1 = 0, minDist1 = Infinity;
+        let idx2 = coords.length - 1, minDist2 = Infinity;
+
+        coords.forEach(([lng, lat], index) => {
+          const d1 = (lat - p1Lat) ** 2 + (lng - p1Lng) ** 2;
+          const d2 = (lat - p2Lat) ** 2 + (lng - p2Lng) ** 2;
+          if (d1 < minDist1) { minDist1 = d1; idx1 = index; }
+          if (d2 < minDist2) { minDist2 = d2; idx2 = index; }
+        });
+
+        const start = Math.min(idx1, idx2);
+        const end = Math.max(idx1, idx2);
+        if (end > start) {
+          const midIdx = Math.floor((start + end) / 2);
+          const midCoord = coords[midIdx];
+          if (midCoord && !isNaN(midCoord[0]) && !isNaN(midCoord[1])) {
+            return { lng: midCoord[0], lat: midCoord[1] };
+          }
+        }
+      }
+    }
+    return { lat: (p1Lat + p2Lat) / 2, lng: (p1Lng + p2Lng) / 2 };
+  }, []);
 
   // Find the active stop data
   const activeStop = useMemo(() => {
@@ -330,12 +400,20 @@ export default function MapPanel() {
     if (mapLayer === 'stops') {
       state.trip?.days?.forEach(day => {
         day.stops?.forEach(s => {
-          allCoordinates.push([s.lng, s.lat]);
+          const lat = parseFloat(s.lat);
+          const lng = parseFloat(s.lng);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            allCoordinates.push([lng, lat]);
+          }
         });
       });
     } else {
       state.homestays.forEach(h => {
-        allCoordinates.push([h.lng, h.lat]);
+        const lat = parseFloat(h.lat);
+        const lng = parseFloat(h.lng);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          allCoordinates.push([lng, lat]);
+        }
       });
     }
 
@@ -469,13 +547,18 @@ export default function MapPanel() {
     }
   }, [state.activeStopId, state.trip?.days, handleShowNearbyPlaces, dispatch]);
 
+  const routesDataRef = useRef(state.routesData);
+  useEffect(() => {
+    routesDataRef.current = state.routesData;
+  }, [state.routesData]);
+
   // Fetch real routes from OSRM whenever stops or day configuration changes
   useEffect(() => {
-    if (useMockMap || !state.trip?.days) return;
+    if (!state.trip?.days) return;
 
     state.trip.days.forEach(async (day) => {
       if (day.stops.length < 2) {
-        if (state.routesData[day.id]) {
+        if (routesDataRef.current[day.id]) {
           dispatch({ type: 'SET_ROUTE_DATA', payload: { dayId: day.id, routeData: null } });
         }
         return;
@@ -486,13 +569,13 @@ export default function MapPanel() {
         .map(s => [parseFloat(s.lng), parseFloat(s.lat)]);
 
       if (currentCoords.length < 2) {
-        if (state.routesData[day.id]) {
+        if (routesDataRef.current[day.id]) {
           dispatch({ type: 'SET_ROUTE_DATA', payload: { dayId: day.id, routeData: null } });
         }
         return;
       }
 
-      const existingRoute = state.routesData[day.id];
+      const existingRoute = routesDataRef.current[day.id];
       if (existingRoute && existingRoute.coordinatesKey === JSON.stringify(currentCoords)) {
         return;
       }
@@ -507,7 +590,7 @@ export default function MapPanel() {
         console.error(`Failed to fetch route for day ${day.id}:`, err);
       }
     });
-  }, [state.trip?.days, useMockMap, dispatch]);
+  }, [state.trip?.days, dispatch]);
 
   // MapLibre Live initialization
   useEffect(() => {
@@ -536,14 +619,11 @@ export default function MapPanel() {
       }
 
       map.on('error', (e) => {
-        console.error('MapLibre error:', e);
-        setMapError('Failed to load MapLibre style. Using local interactive canvas.');
+        console.warn('MapLibre notice:', e?.error?.message || e);
       });
 
       const onMapClick = () => {
-        dispatch({ type: 'SELECT_STOP', payload: null });
-        dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
-        dispatch({ type: 'SET_NEARBY_POIS', payload: [] });
+        handleCloseAllPopups();
       };
       map.on('click', onMapClick);
 
@@ -612,8 +692,14 @@ export default function MapPanel() {
     };
   }, [useMockMap]);
 
+  const isInitialThemeMount = useRef(true);
+
   // Update map style dynamically on theme changes
   useEffect(() => {
+    if (isInitialThemeMount.current) {
+      isInitialThemeMount.current = false;
+      return;
+    }
     if (mapRef.current && !useMockMap) {
       const map = mapRef.current;
       map.setStyle(getCartoStyle(theme));
@@ -625,22 +711,24 @@ export default function MapPanel() {
     }
   }, [theme, useMockMap]);
 
-  // Auto-fit bounds on load/trip change
+  const initialFitDoneRef = useRef(false);
+
+  // Auto-fit bounds on initial load only (prevents map from zooming out when stops are added/updated)
   useEffect(() => {
     const map = mapRef.current;
     if (!map || useMockMap) return;
 
-    // Skip auto-fitting bounds if the user has an active selection (stop or homestay) or if AI provided a specific map center
-    if (state.activeStopId || state.activeHomestayOnMapId || state.selectedHomestayId || state.mapCenter) {
-      return;
-    }
+    if (initialFitDoneRef.current) return;
 
     const fitOnLoad = () => {
-      fitTripBounds(map);
+      if (!initialFitDoneRef.current) {
+        fitTripBounds(map);
+        initialFitDoneRef.current = true;
+      }
     };
 
     if (map.loaded()) {
-      fitTripBounds(map);
+      fitOnLoad();
     } else {
       map.on('load', fitOnLoad);
     }
@@ -648,7 +736,7 @@ export default function MapPanel() {
     return () => {
       map.off('load', fitOnLoad);
     };
-  }, [state.trip, mapLayer, useMockMap, fitTripBounds, state.activeStopId, state.activeHomestayOnMapId, state.selectedHomestayId]);
+  }, [useMockMap, fitTripBounds]);
 
   // Handle AI-triggered map center changes
   useEffect(() => {
@@ -688,9 +776,45 @@ export default function MapPanel() {
         });
       }
     };
-    window.addEventListener('map-pan-to', handlePan);
-    return () => window.removeEventListener('map-pan-to', handlePan);
+    window.addEventListener('pan-map-to-location', handlePan);
+    return () => window.removeEventListener('pan-map-to-location', handlePan);
   }, [useMockMap]);
+
+  // Fit map bounds to highlighted day stops when user clicks or expands a day in the itinerary
+  useEffect(() => {
+    if (!highlightedDayId || !state.trip?.days) return;
+    const targetDay = state.trip.days.find(d => d.id === highlightedDayId);
+    if (!targetDay || !targetDay.stops || targetDay.stops.length === 0) return;
+
+    const validStops = targetDay.stops.filter(s => !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)));
+    if (validStops.length === 0) return;
+
+    if (useMockMap) {
+      const xs = validStops.map(s => mapCoordsToSvg(s.lat, s.lng).x);
+      const ys = validStops.map(s => mapCoordsToSvg(s.lat, s.lng).y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const padX = Math.max((maxX - minX) * 0.25, 40);
+      const padY = Math.max((maxY - minY) * 0.25, 40);
+      const vx = Math.max(0, minX - padX);
+      const vy = Math.max(0, minY - padY);
+      const vw = Math.min(SVG_W - vx, (maxX - minX) + padX * 2);
+      const vh = Math.min(SVG_H - vy, (maxY - minY) + padY * 2);
+      setViewBox({ x: vx, y: vy, w: vw, h: vh });
+      setZoomLevel(SVG_W / vw);
+    } else if (mapRef.current) {
+      const bounds = validStops.reduce(
+        (b, s) => b.extend([parseFloat(s.lng), parseFloat(s.lat)]),
+        new maplibregl.LngLatBounds(
+          [parseFloat(validStops[0].lng), parseFloat(validStops[0].lat)],
+          [parseFloat(validStops[0].lng), parseFloat(validStops[0].lat)]
+        )
+      );
+      mapRef.current.fitBounds(bounds, { padding: 80, maxZoom: 15, duration: 1000 });
+    }
+  }, [highlightedDayId, useMockMap, state.trip?.days, mapCoordsToSvg]);
 
   // Handle nearby places trigger from the sidebar ItineraryPanel
   useEffect(() => {
@@ -738,12 +862,20 @@ export default function MapPanel() {
           ev.preventDefault();
           ev.stopPropagation();
           activePOIPopupRef.current = false;
-          popup.remove();
+          if (popupRef.current) {
+            try {
+              popupRef.current.remove();
+            } catch (err) {}
+            popupRef.current = null;
+          }
+          setActivePoiOnMap(null);
         };
 
         const closeBtn = popupContent.querySelector('.poi-close-btn');
-        closeBtn.addEventListener('click', handleClose);
-        closeBtn.addEventListener('mousedown', handleClose);
+        if (closeBtn) {
+          closeBtn.addEventListener('click', handleClose);
+          closeBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
+        }
 
         popupContent.querySelector('.add-poi-btn').addEventListener('click', (ev) => {
           ev.stopPropagation();
@@ -757,6 +889,7 @@ export default function MapPanel() {
           const newStop = {
             id: `stop-poi-${Date.now()}`,
             name: poi.name,
+            category: poi.category || 'cafe',
             lat: poi.lat,
             lng: poi.lng,
             timeEstimate: '01:00 PM - 02:00 PM',
@@ -769,7 +902,12 @@ export default function MapPanel() {
           dispatch({ type: 'SELECT_STOP', payload: newStop.id });
         });
 
-        if (popupRef.current) popupRef.current.remove();
+        if (popupRef.current) {
+          try {
+            popupRef.current.remove();
+          } catch (err) {}
+          popupRef.current = null;
+        }
         
         const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 15 })
           .setLngLat([poi.lng, poi.lat])
@@ -781,6 +919,7 @@ export default function MapPanel() {
 
         popup.on('close', () => {
           activePOIPopupRef.current = false;
+          popupRef.current = null;
         });
       }
     };
@@ -800,17 +939,15 @@ export default function MapPanel() {
         markersRef.current.forEach(m => m.remove());
         markersRef.current = [];
 
-        if (state.nearbyPOIs.length === 0 && activePOIPopupRef.current) {
-          activePOIPopupRef.current = false;
-          if (popupRef.current) {
-            popupRef.current.remove();
-            popupRef.current = null;
-          }
-        }
-
-        if (popupRef.current && !activePOIPopupRef.current) {
+        // Always force-close any existing popup before re-rendering
+        // This ensures old popups don't linger when selecting a different place
+        if (popupRef.current) {
           popupRef.current.remove();
           popupRef.current = null;
+        }
+
+        if (state.nearbyPOIs.length === 0 && activePOIPopupRef.current) {
+          activePOIPopupRef.current = false;
         }
 
         // Clean up any old day layers that are no longer in the trip days
@@ -818,9 +955,13 @@ export default function MapPanel() {
         const oldDayIds = ['day-1', 'day-2', 'day-3', 'day-4', 'day-5', 'day-6', 'day-7'];
         oldDayIds.forEach(id => {
           if (!activeDayIds.has(id)) {
+            const dashLayerId = `route-dash-day-${id}`;
             const layerId = `route-day-${id}`;
+            const glowLayerId = `route-glow-day-${id}`;
             const sourceId = `route-source-day-${id}`;
+            if (map.getLayer(dashLayerId)) map.removeLayer(dashLayerId);
             if (map.getLayer(layerId)) map.removeLayer(layerId);
+            if (map.getLayer(glowLayerId)) map.removeLayer(glowLayerId);
             if (map.getSource(sourceId)) map.removeSource(sourceId);
 
             const commuteLayerId = `commute-day-${id}`;
@@ -837,26 +978,41 @@ export default function MapPanel() {
           let routeGeoJSON = routesData[day.id];
           
           if (!routeGeoJSON && day.stops.length >= 2) {
-            routeGeoJSON = {
-              type: 'Feature',
-              properties: {},
-              geometry: {
-                type: 'LineString',
-                coordinates: day.stops.map(s => [s.lng, s.lat])
-              }
-            };
+            const validCoords = day.stops
+              .filter(s => s && s.lng !== null && s.lng !== undefined && s.lat !== null && s.lat !== undefined && !isNaN(parseFloat(s.lng)) && !isNaN(parseFloat(s.lat)))
+              .map(s => [parseFloat(s.lng), parseFloat(s.lat)]);
+
+            if (validCoords.length >= 2) {
+              routeGeoJSON = {
+                type: 'FeatureCollection',
+                features: [{
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'LineString',
+                    coordinates: validCoords
+                  }
+                }]
+              };
+            }
           }
 
           const sourceId = `route-source-day-${day.id}`;
           const layerId = `route-day-${day.id}`;
+          const glowLayerId = `route-glow-day-${day.id}`;
+          const dashLayerId = `route-dash-day-${day.id}`;
           const color = getDayColorHex(day.colorHue);
           
           const active = isActiveDay(day.id);
-          const lineWidth = active ? 5 : 2;
-          const lineOpacity = active ? 0.95 : 0.15;
+          const lineWidth = active ? 6 : 3;
+          const lineOpacity = active ? 1.0 : 0.3;
+          const glowWidth = active ? 14 : 6;
+          const glowOpacity = active ? 0.25 : 0.08;
 
           if (!routeGeoJSON) {
+            if (map.getLayer(dashLayerId)) map.removeLayer(dashLayerId);
             if (map.getLayer(layerId)) map.removeLayer(layerId);
+            if (map.getLayer(glowLayerId)) map.removeLayer(glowLayerId);
             if (map.getSource(sourceId)) map.removeSource(sourceId);
             return;
           }
@@ -864,10 +1020,22 @@ export default function MapPanel() {
           const source = map.getSource(sourceId);
           if (source) {
             source.setData(routeGeoJSON);
+            // Update glow layer
+            if (map.getLayer(glowLayerId)) {
+              map.setPaintProperty(glowLayerId, 'line-color', color);
+              map.setPaintProperty(glowLayerId, 'line-width', glowWidth);
+              map.setPaintProperty(glowLayerId, 'line-opacity', glowOpacity);
+            }
+            // Update main route layer
             if (map.getLayer(layerId)) {
               map.setPaintProperty(layerId, 'line-color', color);
               map.setPaintProperty(layerId, 'line-width', lineWidth);
               map.setPaintProperty(layerId, 'line-opacity', lineOpacity);
+            }
+            // Update dash overlay
+            if (map.getLayer(dashLayerId)) {
+              map.setPaintProperty(dashLayerId, 'line-color', color);
+              map.setPaintProperty(dashLayerId, 'line-opacity', active ? 0.6 : 0);
             }
           } else {
             map.addSource(sourceId, {
@@ -875,6 +1043,24 @@ export default function MapPanel() {
               data: routeGeoJSON
             });
 
+            // 1. Glow/halo outline (wider, semi-transparent) — drawn first (below)
+            map.addLayer({
+              id: glowLayerId,
+              type: 'line',
+              source: sourceId,
+              layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+              },
+              paint: {
+                'line-color': color,
+                'line-width': glowWidth,
+                'line-opacity': glowOpacity,
+                'line-blur': 4
+              }
+            });
+
+            // 2. Main solid route line — drawn on top of glow
             map.addLayer({
               id: layerId,
               type: 'line',
@@ -889,8 +1075,75 @@ export default function MapPanel() {
                 'line-opacity': lineOpacity
               }
             });
+
+            // 3. Dashed animated overlay for active routes
+            map.addLayer({
+              id: dashLayerId,
+              type: 'line',
+              source: sourceId,
+              layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+              },
+              paint: {
+                'line-color': color,
+                'line-width': 2,
+                'line-opacity': active ? 0.6 : 0,
+                'line-dasharray': [2, 4]
+              }
+            });
           }
         });
+
+        // Inter-day connector lines — dashed lines linking last stop of Day N to first stop of Day N+1
+        const days = state.trip.days;
+        if (days.length > 1) {
+          // Clean up old inter-day layers
+          for (let i = 0; i < days.length - 1; i++) {
+            const interSourceId = `interday-source-${days[i].id}-${days[i + 1].id}`;
+            const interLayerId = `interday-${days[i].id}-${days[i + 1].id}`;
+            if (map.getLayer(interLayerId)) map.removeLayer(interLayerId);
+            if (map.getSource(interSourceId)) map.removeSource(interSourceId);
+          }
+
+          for (let i = 0; i < days.length - 1; i++) {
+            const currentDay = days[i];
+            const nextDay = days[i + 1];
+            if (!currentDay.stops?.length || !nextDay.stops?.length) continue;
+
+            const lastStop = currentDay.stops[currentDay.stops.length - 1];
+            const firstStop = nextDay.stops[0];
+
+            const interSourceId = `interday-source-${currentDay.id}-${nextDay.id}`;
+            const interLayerId = `interday-${currentDay.id}-${nextDay.id}`;
+
+            const interGeoJSON = {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: [
+                  [lastStop.lng, lastStop.lat],
+                  [firstStop.lng, firstStop.lat]
+                ]
+              }
+            };
+
+            map.addSource(interSourceId, { type: 'geojson', data: interGeoJSON });
+            map.addLayer({
+              id: interLayerId,
+              type: 'line',
+              source: interSourceId,
+              layout: { 'line-join': 'round', 'line-cap': 'round' },
+              paint: {
+                'line-color': '#94a3b8',
+                'line-width': 2,
+                'line-opacity': 0.5,
+                'line-dasharray': [4, 6]
+              }
+            });
+          }
+        }
 
         // Dotted commute lines from hovered/selected homestay to all active day stops on the live map
         let filterDayId = highlightedDayId;
@@ -974,13 +1227,22 @@ export default function MapPanel() {
           const isActiveDayForMarkers = !highlightedDayId || day.id === highlightedDayId;
 
           day.stops.forEach((stop, idx) => {
+            const stopLat = parseFloat(stop.lat);
+            const stopLng = parseFloat(stop.lng);
+            if (isNaN(stopLat) || isNaN(stopLng)) return;
+
+            const stopLabelInfo = getStopLabel(stop, day.stops);
+
             const el = document.createElement('div');
             el.className = 'stop-marker';
             
             const color = getDayColorHex(day.colorHue);
             el.style.backgroundColor = color;
             el.style.color = '#0a0c10';
-            el.innerText = `${idx + 1}`;
+            el.innerHTML = `
+              <span>${idx + 1}</span>
+              <div class="stop-marker-label">${stopLabelInfo.label}</div>
+            `;
 
             // Dim if not active day
             if (!isActiveDayForMarkers) {
@@ -997,6 +1259,12 @@ export default function MapPanel() {
 
             el.addEventListener('click', (e) => {
               e.stopPropagation();
+              // Force-close any existing popup before opening a new one
+              if (popupRef.current) {
+                popupRef.current.remove();
+                popupRef.current = null;
+              }
+              activePOIPopupRef.current = false;
               handleMapStopClick(stop.id);
             });
 
@@ -1008,7 +1276,7 @@ export default function MapPanel() {
             });
 
             const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-              .setLngLat([stop.lng, stop.lat])
+              .setLngLat([stopLng, stopLat])
               .addTo(map);
 
             markersRef.current.push(marker);
@@ -1019,8 +1287,9 @@ export default function MapPanel() {
             for (let i = 0; i < day.stops.length - 1; i++) {
               const s1 = day.stops[i];
               const s2 = day.stops[i + 1];
-              const midLat = (s1.lat + s2.lat) / 2;
-              const midLng = (s1.lng + s2.lng) / 2;
+              const legMidpoint = getLegMidpoint(s1, s2, routesData[day.id]);
+              const midLat = legMidpoint.lat;
+              const midLng = legMidpoint.lng;
 
               let travelTime = '';
               const routeData = routesData[day.id];
@@ -1031,13 +1300,13 @@ export default function MapPanel() {
                 
                 if (distance < 1500) {
                   const mins = Math.round(leg.duration / 60);
-                  travelTime = `🚶 ${distStr} (${mins}min)`;
+                  travelTime = `${distStr} (${mins}min)`;
                 } else if (distance < 15000) {
                   const driveMins = Math.max(1, Math.round(distance / 500));
-                  travelTime = `🚗 ${distStr} (${driveMins}min)`;
+                  travelTime = `${distStr} (${driveMins}min)`;
                 } else {
                   const trainMins = Math.max(1, Math.round(distance / 800));
-                  travelTime = `🚆 ${distStr} (${trainMins}min)`;
+                  travelTime = `${distStr} (${trainMins}min)`;
                 }
               } else {
                 const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
@@ -1080,8 +1349,8 @@ export default function MapPanel() {
                   </div>
                   <div class="popup-desc" style="font-size: 12px; line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${stop.rationale}</div>
                   <div style="display: flex; gap: 6px; margin-top: 10px;">
-                    <button class="nearby-btn" style="flex: 1; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🔍 Nearby</button>
-                    <button class="delete-btn" style="padding: 6px 10px; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">🗑️</button>
+                    <button class="nearby-btn" style="flex: 1; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">Nearby</button>
+                    <button class="delete-btn" style="padding: 6px 10px; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">Delete</button>
                   </div>
                 </div>
               </div>
@@ -1098,14 +1367,20 @@ export default function MapPanel() {
               e.stopPropagation();
               setClosedPopupStopId(state.activeStopId);
               if (popupRef.current) {
-                popupRef.current.remove();
+                try {
+                  popupRef.current.remove();
+                } catch (err) {}
                 popupRef.current = null;
               }
+              activePOIPopupRef.current = false;
+              dispatch({ type: 'SELECT_STOP', payload: null });
             };
 
             const closeBtn = popupContent.querySelector('.popup-close-btn');
-            closeBtn.addEventListener('click', handleClose);
-            closeBtn.addEventListener('mousedown', handleClose);
+            if (closeBtn) {
+              closeBtn.addEventListener('click', handleClose);
+              closeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            }
 
             popupContent.querySelector('.nearby-btn').addEventListener('click', (e) => {
               e.stopPropagation();
@@ -1133,9 +1408,9 @@ export default function MapPanel() {
         if (state.showHomestays) {
           visibleHomestays.forEach(home => {
             const el = document.createElement('div');
-            el.className = 'custom-homestay-marker cursor-pointer transition-all duration-300';
+            el.className = 'custom-homestay-marker cursor-pointer';
             
-            const isSelected = state.selectedHomestayId === home.id;
+            const isSelected = Object.values(state.selectedHomestaysByDay || {}).some(list => Array.isArray(list) && list.includes(home.id));
             const isHovered = state.hoveredHomestayId === home.id;
             const isHighlighted = isSelected || isHovered;
 
@@ -1150,6 +1425,12 @@ export default function MapPanel() {
 
             el.addEventListener('click', (e) => {
               e.stopPropagation();
+              // Force-close any existing popup before opening a new one
+              if (popupRef.current) {
+                popupRef.current.remove();
+                popupRef.current = null;
+              }
+              activePOIPopupRef.current = false;
               handleMapHomestayClick(home.id);
             });
 
@@ -1171,7 +1452,7 @@ export default function MapPanel() {
         // Homestay popover on map
         if (state.showHomestays && activeHomestayOnMap && closedPopupHomestayId !== state.activeHomestayOnMapId) {
           const home = activeHomestayOnMap;
-          const isSelected = state.selectedHomestayId === home.id;
+          const isSelected = Object.values(state.selectedHomestaysByDay || {}).some(list => Array.isArray(list) && list.includes(home.id));
           const popupContent = document.createElement('div');
           popupContent.style.cssText = 'font-family: "Sora", "Inter", system-ui, sans-serif;';
           
@@ -1206,18 +1487,25 @@ export default function MapPanel() {
             e.stopPropagation();
             setClosedPopupHomestayId(state.activeHomestayOnMapId);
             if (popupRef.current) {
-              popupRef.current.remove();
+              try {
+                popupRef.current.remove();
+              } catch (err) {}
               popupRef.current = null;
             }
+            activePOIPopupRef.current = false;
+            dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: null });
           };
 
           const closeBtn = popupContent.querySelector('.homestay-close-btn');
-          closeBtn.addEventListener('click', handleClose);
-          closeBtn.addEventListener('mousedown', handleClose);
+          if (closeBtn) {
+            closeBtn.addEventListener('click', handleClose);
+            closeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+          }
 
           popupContent.querySelector('.select-btn').addEventListener('click', (e) => {
             e.stopPropagation();
-            dispatch({ type: 'SELECT_HOMESTAY', payload: isSelected ? null : home.id });
+            const targetDayId = home.dayId || state.highlightedDayId || 'day-1';
+            dispatch({ type: 'SELECT_HOMESTAY', payload: { dayId: targetDayId, homestayId: home.id } });
           });
 
           const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 25 })
@@ -1231,20 +1519,36 @@ export default function MapPanel() {
         // Nearby POI markers
         // Nearby POI markers
         if (state.nearbyPOIs.length > 0) {
+          const poiCategoryCounters = { cafe: 0, food: 0, sight: 0, hotel: 0, other: 0 };
           state.nearbyPOIs.forEach((poi) => {
             const el = document.createElement('div');
             el.className = 'custom-poi-marker cursor-pointer';
             
-            let icon = '📍';
-            if (poi.category === 'food') icon = '🍱';
-            else if (poi.category === 'cafe') icon = '☕';
-            else if (poi.category === 'sight') icon = '🏛️';
-            else if (poi.category === 'hotel') icon = '🏨';
+            let categoryLabel = 'POI';
+            let iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent);"><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/><circle cx="12" cy="10" r="3"/></svg>`;
+            const cat = poi.category || 'other';
+            if (cat === 'food') {
+              categoryLabel = 'Food'; poiCategoryCounters.food++;
+              iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #f59e0b;"><path d="M18 2v6h-3V2M6 2v20M12 2v6M12 8v14M18 8v14M6 2a3 3 0 0 1 3 3v3H3V5a3 3 0 0 1 3-3z"/></svg>`;
+            } else if (cat === 'cafe') {
+              categoryLabel = 'Cafe'; poiCategoryCounters.cafe++;
+              iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #2dd4bf;"><path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3"/></svg>`;
+            } else if (cat === 'sight') {
+              categoryLabel = 'Sight'; poiCategoryCounters.sight++;
+              iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #a78bfa;"><line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 20 7 4 7 12 2"/></svg>`;
+            } else if (cat === 'hotel') {
+              categoryLabel = 'Hotel'; poiCategoryCounters.hotel++;
+              iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #f43f5e;"><path d="M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01"/></svg>`;
+            } else {
+              categoryLabel = 'POI'; poiCategoryCounters.other++;
+            }
+            const labelNum = poiCategoryCounters[cat] || poiCategoryCounters.other;
 
             el.innerHTML = `
-              <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer;">
-                ${icon}
+              <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer;">
+                ${iconSvg}
               </div>
+              <div class="poi-marker-label">${categoryLabel} ${labelNum}</div>
             `;
 
             el.addEventListener('click', (e) => {
@@ -1364,9 +1668,23 @@ export default function MapPanel() {
               {state.trip.days.map((day) => {
                 if (day.stops.length < 2) return null;
                 const color = getDayColorHex(day.colorHue);
-                const pathData = day.stops
-                  .map((stop, idx) => {
-                    const { x, y } = mapCoordsToSvg(stop.lat, stop.lng);
+
+                // Use OSRM route geometry if available, else connect stops directly
+                const routeData = routesData[day.id];
+                let coords = [];
+                if (routeData && routeData.features && routeData.features[0] && routeData.features[0].geometry && routeData.features[0].geometry.coordinates) {
+                  coords = routeData.features[0].geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                } else {
+                  coords = day.stops
+                    .filter(s => s && !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)))
+                    .map(s => ({ lat: parseFloat(s.lat), lng: parseFloat(s.lng) }));
+                }
+
+                if (coords.length < 2) return null;
+
+                const pathData = coords
+                  .map((pt, idx) => {
+                    const { x, y } = mapCoordsToSvg(pt.lat, pt.lng);
                     return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
                   })
                   .join(' ');
@@ -1391,6 +1709,30 @@ export default function MapPanel() {
                 );
               })}
 
+              {/* Inter-day connector lines — dashed lines between last stop of Day N and first stop of Day N+1 */}
+              {state.trip.days.length > 1 && state.trip.days.slice(0, -1).map((day, i) => {
+                const nextDay = state.trip.days[i + 1];
+                if (!day.stops?.length || !nextDay.stops?.length) return null;
+
+                const lastStop = day.stops[day.stops.length - 1];
+                const firstStop = nextDay.stops[0];
+                const p1 = mapCoordsToSvg(lastStop.lat, lastStop.lng);
+                const p2 = mapCoordsToSvg(firstStop.lat, firstStop.lng);
+
+                return (
+                  <line
+                    key={`interday-${day.id}-${nextDay.id}`}
+                    x1={p1.x} y1={p1.y}
+                    x2={p2.x} y2={p2.y}
+                    stroke="#94a3b8"
+                    strokeWidth="1.5"
+                    strokeDasharray="6,4"
+                    opacity={0.4}
+                    strokeLinecap="round"
+                  />
+                );
+              })}
+
               {/* Travel-time labels between consecutive stops */}
               {state.trip.days.map((day) => {
                 const isActive = !highlightedDayId || day.id === highlightedDayId;
@@ -1398,10 +1740,10 @@ export default function MapPanel() {
 
                 return day.stops.slice(0, -1).map((s1, i) => {
                   const s2 = day.stops[i + 1];
-                  const p1 = mapCoordsToSvg(s1.lat, s1.lng);
-                  const p2 = mapCoordsToSvg(s2.lat, s2.lng);
-                  const midX = (p1.x + p2.x) / 2;
-                  const midY = (p1.y + p2.y) / 2;
+                  const legMid = getLegMidpoint(s1, s2, routesData[day.id]);
+                  const pMid = mapCoordsToSvg(legMid.lat, legMid.lng);
+                  const midX = pMid.x;
+                  const midY = pMid.y;
 
                   let label = '';
                   const routeData = routesData[day.id];
@@ -1412,13 +1754,13 @@ export default function MapPanel() {
                     
                     if (distance < 1500) {
                       const mins = Math.round(leg.duration / 60);
-                      label = `🚶 ${distStr} (${mins}min)`;
+                      label = `${distStr} (${mins}min)`;
                     } else if (distance < 15000) {
                       const driveMins = Math.max(1, Math.round(distance / 500));
-                      label = `🚗 ${distStr} (${driveMins}min)`;
+                      label = `${distStr} (${driveMins}min)`;
                     } else {
                       const trainMins = Math.max(1, Math.round(distance / 800));
-                      label = `🚆 ${distStr} (${trainMins}min)`;
+                      label = `${distStr} (${trainMins}min)`;
                     }
                   } else {
                     const dist = haversine(s1.lat, s1.lng, s2.lat, s2.lng);
@@ -1458,6 +1800,10 @@ export default function MapPanel() {
                   const isPulsing = isHovered || isActive;
                   const pinOpacity = isActiveDayPins ? 1 : 0.2;
 
+                  const stopLabelInfo = getStopLabel(stop, day.stops);
+                  const svgLabelY = 11 + 5 / Math.sqrt(zoomLevel || 1);
+                  const svgFontSize = Math.min(6, Math.max(3.5, 4.5 + 1.2 / Math.sqrt(zoomLevel || 1)));
+
                   return (
                     <g
                       key={stop.id}
@@ -1476,7 +1822,10 @@ export default function MapPanel() {
                       <text y="2.5" textAnchor="middle" fill={color} fontSize={isPulsing ? '7' : '6'} fontWeight="bold" fontFamily="JetBrains Mono, monospace" style={{ transition: 'all 0.3s ease' }}>
                         {stop.order}
                       </text>
-                      <title>{stop.name}</title>
+                      <text y={svgLabelY} textAnchor="middle" fill="var(--text)" fontSize={svgFontSize} fontWeight="700" style={{ fontFamily: "'Sora', 'Inter', system-ui, sans-serif" }}>
+                        {stopLabelInfo.label}
+                      </text>
+                      <title>{stopLabelInfo.label} — {stop.name}</title>
                     </g>
                   );
                 });
@@ -1488,7 +1837,7 @@ export default function MapPanel() {
               <g className="fade-in">
                 {visibleHomestays.map((home) => {
                   const { x, y } = mapCoordsToSvg(home.lat, home.lng);
-                  const isSelected = state.selectedHomestayId === home.id;
+                  const isSelected = Object.values(state.selectedHomestaysByDay || {}).some(list => Array.isArray(list) && list.includes(home.id));
                   const isHovered = state.hoveredHomestayId === home.id;
                   const isActiveOnMap = state.activeHomestayOnMapId === home.id;
                   const isHighlighted = isSelected || isHovered || isActiveOnMap;
@@ -1542,35 +1891,53 @@ export default function MapPanel() {
             )}
 
             {/* POI Overlay — visible if state.nearbyPOIs.length > 0 */}
-            {state.nearbyPOIs.length > 0 && (
-              <g className="fade-in">
-                {state.nearbyPOIs.map((poi) => {
-                  const { x, y } = mapCoordsToSvg(poi.lat, poi.lng);
-                  let icon = '📍';
-                  if (poi.category === 'food') icon = '🍱';
-                  else if (poi.category === 'cafe') icon = '☕';
-                  else if (poi.category === 'sight') icon = '🏛️';
+            {state.nearbyPOIs.length > 0 && (() => {
+              const svgPoiCounters = { cafe: 0, food: 0, sight: 0, hotel: 0, other: 0 };
+              const labeledPOIs = state.nearbyPOIs.map((poi) => {
+                let categoryLabel = 'POI';
+                const cat = poi.category || 'other';
+                if (cat === 'food') { categoryLabel = 'Food'; svgPoiCounters.food++; }
+                else if (cat === 'cafe') { categoryLabel = 'Cafe'; svgPoiCounters.cafe++; }
+                else if (cat === 'sight') { categoryLabel = 'Sight'; svgPoiCounters.sight++; }
+                else if (cat === 'hotel') { categoryLabel = 'Hotel'; svgPoiCounters.hotel++; }
+                else { svgPoiCounters.other++; }
+                const labelNum = svgPoiCounters[cat] || svgPoiCounters.other;
+                return { ...poi, label: `${categoryLabel} ${labelNum}` };
+              });
+              return (
+                <g className="fade-in">
+                  {labeledPOIs.map((poi) => {
+                    const { x, y } = mapCoordsToSvg(poi.lat, poi.lng);
+                    return (
+                      <g
+                        key={poi.id}
+                        className="cursor-pointer"
+                        transform={`translate(${x}, ${y})`}
+                        onClick={() => {
+                          dispatch({ type: 'SELECT_STOP', payload: null });
+                          setActivePoiOnMap(poi);
+                        }}
+                      >
+                        <circle r="12" fill="var(--surface)" stroke="var(--accent-border)" strokeWidth="1" />
+                        <circle r="4" fill="var(--accent)" />
+                        <text
+                          textAnchor="middle"
+                          y="22"
+                          fontSize="5.5"
+                          fontWeight="700"
+                          fill="var(--text)"
+                          style={{ fontFamily: "'Sora', 'Inter', system-ui, sans-serif" }}
+                        >
+                          {poi.label}
+                        </text>
+                        <title>{poi.label} — {poi.name} — Rating: {poi.rating}</title>
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })()}
 
-                  return (
-                    <g
-                      key={poi.id}
-                      className="cursor-pointer"
-                      transform={`translate(${x}, ${y})`}
-                      onClick={() => {
-                        dispatch({ type: 'SELECT_STOP', payload: null });
-                        setActivePoiOnMap(poi);
-                      }}
-                    >
-                      <circle r="12" fill="var(--surface)" stroke="var(--border)" strokeWidth="1" />
-                      <text textAnchor="middle" y="3.5" fontSize="8">
-                        {icon}
-                      </text>
-                      <title>{poi.name} — Rating: {poi.rating}★</title>
-                    </g>
-                  );
-                })}
-              </g>
-            )}
           </svg>
 
           {/* ─── Stop Popover (SVG mode) ─── */}
@@ -1613,7 +1980,7 @@ export default function MapPanel() {
                         }}
                         className="flex-1 py-1.5 bg-accent text-bg rounded-lg text-[10px] font-bold cursor-pointer"
                       >
-                        🔍 Nearby
+                        Nearby
                       </button>
                       <button
                         onClick={(e) => {
@@ -1625,7 +1992,7 @@ export default function MapPanel() {
                         }}
                         className="px-2.5 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg text-[10px] font-bold cursor-pointer"
                       >
-                        🗑️
+                        Delete
                       </button>
                     </div>
                     <button
@@ -1650,8 +2017,8 @@ export default function MapPanel() {
             const { x, y } = mapCoordsToSvg(home.lat, home.lng);
             const pctX = ((x - viewBox.x) / viewBox.w) * 100;
             const pctY = ((y - viewBox.y) / viewBox.h) * 100;
-            const isSelected = state.selectedHomestayId === home.id;
- 
+            const isSelected = Object.values(state.selectedHomestaysByDay || {}).some(list => Array.isArray(list) && list.includes(home.id));
+
             return (
               <div
                 className="absolute z-30 scale-in pointer-events-auto"
@@ -1695,7 +2062,8 @@ export default function MapPanel() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        dispatch({ type: 'SELECT_HOMESTAY', payload: isSelected ? null : home.id });
+                        const targetDayId = home.dayId || state.highlightedDayId || 'day-1';
+                        dispatch({ type: 'SELECT_HOMESTAY', payload: { dayId: targetDayId, homestayId: home.id } });
                       }}
                       className="w-full py-2 rounded-lg text-[10px] font-bold cursor-pointer"
                       style={{
@@ -1767,6 +2135,7 @@ export default function MapPanel() {
                         const newStop = {
                           id: `stop-poi-${Date.now()}`,
                           name: poi.name,
+                          category: poi.category || 'cafe',
                           lat: poi.lat,
                           lng: poi.lng,
                           timeEstimate: '01:00 PM - 02:00 PM',
@@ -1868,6 +2237,7 @@ export default function MapPanel() {
           onClick={handleToggleHomestays}
           className={`map-ctrl ${state.showHomestays ? 'active' : ''}`}
           aria-label="Toggle homestays"
+          title="Toggle homestays"
         >
           <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
             <path
@@ -1881,6 +2251,24 @@ export default function MapPanel() {
               d="M7 16v-5h4v5"
               stroke="currentColor"
               strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+
+        {/* Close All Popups */}
+        <button
+          onClick={handleCloseAllPopups}
+          className={`map-ctrl ${hasActivePopup ? 'active !bg-red-500/20 !border-red-500/50 !text-red-400' : ''}`}
+          aria-label="Close all popups"
+          title="Close all popups"
+        >
+          <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
+            <path
+              d="M4.5 4.5l9 9M13.5 4.5l-9 9"
+              stroke="currentColor"
+              strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
             />

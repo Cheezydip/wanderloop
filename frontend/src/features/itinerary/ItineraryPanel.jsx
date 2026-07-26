@@ -4,6 +4,9 @@ import { getDayColorHex } from '../../utils/colors';
 import { haversine } from '../../utils/haversine';
 import { fetchOptimizedOrder } from '../../utils/routeService';
 import { getCurrencySymbol } from '../../utils/currency';
+import { getStopLabel, CategoryIcon } from '../../utils/stopUtils';
+import { buildGoogleMapsUrl, buildSinglePlaceGoogleMapsUrl } from '../../utils/exportUtils';
+import { AlertTriangle, Footprints, Car, Train, Compass, Star, Trash2, Moon, MapPin } from 'lucide-react';
 
 /* ─── Skeleton Shimmer for Generating State ─── */
 function SkeletonDay({ idx }) {
@@ -46,6 +49,43 @@ export default function ItineraryPanel() {
   const [activeRationaleId, setActiveRationaleId] = useState(null);
   const [optimizingDayId, setOptimizingDayId] = useState(null);
   const [isBudgetOpen, setIsBudgetOpen] = useState(false);
+
+  // ─── Drag-and-Drop State ───
+  const [dragState, setDragState] = useState({ dayId: null, dragIdx: null, overIdx: null });
+
+  const handleDragStart = (e, dayId, idx) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', idx.toString());
+    setDragState({ dayId, dragIdx: idx, overIdx: null });
+  };
+
+  const handleDragOver = (e, dayId, idx) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragState.dayId === dayId && dragState.overIdx !== idx) {
+      setDragState(prev => ({ ...prev, overIdx: idx }));
+    }
+  };
+
+  const handleDrop = (e, dayId, dropIdx) => {
+    e.preventDefault();
+    const { dragIdx } = dragState;
+    if (dragIdx === null || dragIdx === dropIdx || dragState.dayId !== dayId) {
+      setDragState({ dayId: null, dragIdx: null, overIdx: null });
+      return;
+    }
+    const day = state.trip?.days?.find(d => d.id === dayId);
+    if (!day) return;
+    const newStops = [...day.stops];
+    const [moved] = newStops.splice(dragIdx, 1);
+    newStops.splice(dropIdx, 0, moved);
+    dispatch({ type: 'REORDER_STOPS', payload: { dayId, stops: newStops } });
+    setDragState({ dayId: null, dragIdx: null, overIdx: null });
+  };
+
+  const handleDragEnd = () => {
+    setDragState({ dayId: null, dragIdx: null, overIdx: null });
+  };
 
   // ─── Add Stop Modal State ───
   const [addStopModalDayId, setAddStopModalDayId] = useState(null);
@@ -125,27 +165,27 @@ export default function ItineraryPanel() {
     dispatch({ type: 'SET_BUDGET_ITEMS', payload: DEFAULT_BUDGET_ITEMS });
   };
 
-  // Sync expandedDayId with state.highlightedDayId bi-directionally
+  // Sync expandedDayId with state.highlightedDayId when map or external actions highlight a day
   useEffect(() => {
-    if (state.highlightedDayId) {
-      setExpandedDayId(state.highlightedDayId);
-    }
+    setExpandedDayId(state.highlightedDayId || null);
   }, [state.highlightedDayId]);
 
   const toggleDay = (dayId) => {
     const nextDayId = expandedDayId === dayId ? null : dayId;
     setExpandedDayId(nextDayId);
-    // Dispatch highlight day so the map highlights/filters as well
-    dispatch({ type: 'HIGHLIGHT_DAY', payload: dayId });
+    // Dispatch highlight day so the map highlights/filters as well (or null if collapsing)
+    dispatch({ type: 'HIGHLIGHT_DAY', payload: nextDayId });
   };
 
   const visibleHomestays = useMemo(() => {
-    if (!expandedDayId || !state.trip?.days) return [];
+    if (!state.homestays || state.homestays.length === 0) return [];
+    if (!expandedDayId || !state.trip?.days) return state.homestays;
     const day = state.trip.days.find(d => d.id === expandedDayId);
-    if (!day || !day.stops || day.stops.length === 0) return [];
-    return state.homestays.filter(h =>
-      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 25)
+    if (!day || !day.stops || day.stops.length === 0) return state.homestays;
+    const nearby = state.homestays.filter(h =>
+      day.stops.some(stop => haversine(h.lat, h.lng, stop.lat, stop.lng) <= 50)
     );
+    return nearby.length > 0 ? nearby : state.homestays;
   }, [state.homestays, state.trip?.days, expandedDayId]);
 
   // Scroll active stop into view smoothly
@@ -240,12 +280,15 @@ export default function ItineraryPanel() {
     }
   };
 
-  const handleSelectHomestay = (homestayId) => {
-    const nextId = state.selectedHomestayId === homestayId ? null : homestayId;
-    dispatch({ type: 'SELECT_HOMESTAY', payload: nextId });
-    dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: nextId });
-    if (nextId) {
-      const home = state.homestays.find(h => h.id === nextId);
+  const handleSelectHomestay = (homestayId, targetDayId = null) => {
+    const dayId = targetDayId || expandedDayId || state.highlightedDayId || state.trip?.days?.[0]?.id || 'day-1';
+    if (!expandedDayId) {
+      setExpandedDayId(dayId);
+    }
+    dispatch({ type: 'SELECT_HOMESTAY', payload: { dayId, homestayId } });
+    dispatch({ type: 'SELECT_HOMESTAY_ON_MAP', payload: homestayId });
+    if (homestayId) {
+      const home = state.homestays.find(h => h.id === homestayId);
       if (home) {
         window.dispatchEvent(new CustomEvent('map-pan-to', { detail: { lat: home.lat, lng: home.lng } }));
       }
@@ -339,7 +382,7 @@ export default function ItineraryPanel() {
         {isOverBudget && (
           <div className="mt-2.5 px-3 py-1.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-[10px] font-semibold flex items-center justify-between">
             <span className="flex items-center gap-1.5">
-              <span>⚠️</span>
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0 inline" />
               <span>Budget Exceeded</span>
             </span>
             <span className="font-mono font-bold text-[11px]">
@@ -523,7 +566,30 @@ export default function ItineraryPanel() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2">
+                        {(() => {
+                          const dayHotelIds = state.selectedHomestaysByDay?.[day.id] || [];
+                          const dayHotels = (state.homestays || []).filter(h => dayHotelIds.includes(h.id));
+                          const dayStopsWithHotel = [
+                            ...dayHotels.map(h => ({ name: `${h.name} (Hotel)`, lat: h.lat, lng: h.lng })),
+                            ...(day.stops || [])
+                          ];
+                          return (
+                            <a
+                              href={buildGoogleMapsUrl(dayStopsWithHotel, 'transit', state.trip?.title)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1 rounded hover:bg-white/10 text-muted hover:text-accent transition-colors flex items-center gap-1 text-[10px]"
+                              title={`Open Day ${day.dayNumber} route in Google Maps`}
+                            >
+                              <svg className="w-3 h-3 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                              </svg>
+                              <span className="hidden sm:inline text-[9px]">Maps</span>
+                            </a>
+                          );
+                        })()}
                         <span className="font-mono text-[10px]" style={{ color: 'var(--muted)' }}>
                           {currencySymbol}{dayCost.toLocaleString()}
                         </span>
@@ -553,6 +619,9 @@ export default function ItineraryPanel() {
                           day.stops.map((stop, idx) => {
                             const isHovered = state.hoveredStopId === stop.id;
                             const isActive = state.activeStopId === stop.id;
+                            const isDragging = dragState.dayId === day.id && dragState.dragIdx === idx;
+                            const isDragOver = dragState.dayId === day.id && dragState.overIdx === idx;
+                            const stopLabelInfo = getStopLabel(stop, day.stops);
 
                             const nextStop = day.stops[idx + 1];
                             let commuteText = '';
@@ -564,38 +633,47 @@ export default function ItineraryPanel() {
                                 const distStr = distance < 1000 ? `${Math.round(distance)}m` : `${(distance / 1000).toFixed(1)}km`;
                                 if (distance < 1500) {
                                   const mins = Math.round(leg.duration / 60);
-                                  commuteText = `🚶 ${distStr} · ${mins} min walk`;
+                                  commuteText = `${distStr} · ${mins} min walk`;
                                 } else if (distance < 15000) {
                                   const driveMins = Math.max(1, Math.round(distance / 500));
-                                  commuteText = `🚗 ${distStr} · ~${driveMins} min drive`;
+                                  commuteText = `${distStr} · ~${driveMins} min drive`;
                                 } else {
                                   const trainMins = Math.max(1, Math.round(distance / 800));
-                                  commuteText = `🚆 ${distStr} · ~${trainMins} min train`;
+                                  commuteText = `${distStr} · ~${trainMins} min train`;
                                 }
                               } else {
                                 const dist = haversine(stop.lat, stop.lng, nextStop.lat, nextStop.lng);
                                 const distStr = dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`;
                                 if (dist < 1.5) {
                                   const mins = Math.max(1, Math.round(dist / 0.08));
-                                  commuteText = `🚶 ${distStr} · ~${mins} min walk`;
+                                  commuteText = `${distStr} · ~${mins} min walk`;
                                 } else if (dist < 15) {
                                   const driveMins = Math.max(1, Math.round(dist / 0.5));
-                                  commuteText = `🚗 ${distStr} · ~${driveMins} min drive`;
+                                  commuteText = `${distStr} · ~${driveMins} min drive`;
                                 } else {
                                   const trainMins = Math.max(1, Math.round(dist / 0.8));
-                                  commuteText = `🚆 ${distStr} · ~${trainMins} min train`;
+                                  commuteText = `${distStr} · ~${trainMins} min train`;
                                 }
                               }
                             }
 
                             return (
                               <div key={stop.id} className="space-y-1">
+                                {/* Drag insertion indicator */}
+                                {isDragOver && dragState.dragIdx !== null && dragState.dragIdx > idx && (
+                                  <div className="drag-insertion-line visible" />
+                                )}
                                 <div
                                   id={`stop-row-${stop.id}`}
+                                  draggable
+                                  onDragStart={(e) => handleDragStart(e, day.id, idx)}
+                                  onDragOver={(e) => handleDragOver(e, day.id, idx)}
+                                  onDrop={(e) => handleDrop(e, day.id, idx)}
+                                  onDragEnd={handleDragEnd}
                                   onClick={() => handleStopClick(stop.id)}
                                   onMouseEnter={() => handleStopHover(stop.id)}
                                   onMouseLeave={() => handleStopHover(null)}
-                                  className="p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all duration-200 group/stop cursor-pointer"
+                                  className={`p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all duration-200 group/stop cursor-pointer ${isDragging ? 'stop-tile-dragging' : ''}`}
                                   style={{
                                     background: isActive
                                       ? 'var(--accent-dim)'
@@ -611,7 +689,9 @@ export default function ItineraryPanel() {
                                 >
                                   <div className="flex items-start gap-2 min-w-0">
                                     {/* Drag handle */}
-                                    <div className="flex flex-col gap-[2px] mt-1 opacity-0 group-hover/stop:opacity-40 transition-opacity cursor-grab shrink-0">
+                                    <div className="flex flex-col gap-[2px] mt-1 opacity-0 group-hover/stop:opacity-40 transition-opacity cursor-grab shrink-0"
+                                      onMouseDown={(e) => { e.currentTarget.parentElement.parentElement.draggable = true; }}
+                                    >
                                       <div className="flex gap-[2px]">
                                         <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
                                         <span className="w-1 h-1 rounded-full" style={{ background: 'var(--muted)' }}></span>
@@ -634,7 +714,12 @@ export default function ItineraryPanel() {
                                       {stop.order}
                                     </span>
                                     <div className="min-w-0">
-                                      <h4 className="font-semibold truncate text-[11px]" style={{ color: 'var(--text)' }}>{stop.name}</h4>
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="text-[8px] font-mono px-1 py-0.5 rounded shrink-0 font-bold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
+                                          {stopLabelInfo.label}
+                                        </span>
+                                        <h4 className="font-semibold truncate text-[11px]" style={{ color: 'var(--text)' }}>{stop.name}</h4>
+                                      </div>
                                       <span className="text-[9px] font-mono" style={{ color: 'var(--muted)' }}>{stop.timeEstimate}</span>
                                     </div>
                                   </div>
@@ -643,6 +728,19 @@ export default function ItineraryPanel() {
                                     <span className="font-mono text-[9px]" style={{ color: 'var(--muted)' }}>
                                       {stop.costEstimate === 0 ? 'Free' : `${currencySymbol}${stop.costEstimate.toLocaleString()}`}
                                     </span>
+                                    <a
+                                      href={buildSinglePlaceGoogleMapsUrl(stop, state.trip?.title)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="p-0.5 rounded hover:text-blue-400 hover:bg-white/[0.05] opacity-0 group-hover/stop:opacity-100 transition-all cursor-pointer"
+                                      style={{ color: 'var(--muted)' }}
+                                      title="Open location in Google Maps"
+                                    >
+                                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                                      </svg>
+                                    </a>
                                     <button
                                       onClick={(e) => handleDeleteStop(day.id, stop.id, e)}
                                       className="p-0.5 rounded hover:text-rose-400 hover:bg-white/[0.05] opacity-0 group-hover/stop:opacity-100 transition-all cursor-pointer"
@@ -676,7 +774,7 @@ export default function ItineraryPanel() {
                                     {/* Nearby Recommendations */}
                                     <div className="pt-2.5 border-t" style={{ borderColor: 'var(--accent-border)' }}>
                                       <span className="font-bold uppercase tracking-wider text-[7.5px] block mb-1.5 flex items-center gap-1" style={{ color: 'var(--accent)' }}>
-                                        <span>📍</span> Nearby Cafes, Restaurants & Shops
+                                        <Compass className="w-3 h-3 text-accent inline" /> Nearby Cafes, Restaurants & Shops
                                       </span>
                                       {state.loadingPOIs ? (
                                         <div className="flex items-center gap-1.5 py-1">
@@ -687,45 +785,58 @@ export default function ItineraryPanel() {
                                         </div>
                                       ) : state.nearbyPOIs && state.nearbyPOIs.length > 0 ? (
                                         <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1 no-scrollbar">
-                                          {state.nearbyPOIs.map((poi) => {
-                                            let icon = '📍';
-                                            if (poi.category === 'food') icon = '🍱';
-                                            else if (poi.category === 'cafe') icon = '☕';
-                                            else if (poi.category === 'sight') icon = '🏛️';
-                                            else if (poi.category === 'hotel') icon = '🏨';
-                                            return (
-                                              <div 
-                                                key={poi.id} 
-                                                onClick={() => {
-                                                  window.dispatchEvent(new CustomEvent('show-poi-popup', { detail: poi }));
-                                                }}
-                                                className="flex justify-between items-start gap-2 p-1.5 rounded border transition-colors cursor-pointer"
-                                                style={{
-                                                  background: 'var(--surface)',
-                                                  borderColor: 'var(--border)'
-                                                }}
-                                                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-border)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
-                                              >
-                                                <div className="min-w-0 flex-1">
-                                                  <div className="font-semibold truncate text-[9.5px] flex items-center gap-1" style={{ color: 'var(--text)' }}>
-                                                    <span>{icon}</span>
-                                                    <span>{poi.name}</span>
+                                          {(() => {
+                                            const panelPoiCounters = { cafe: 0, food: 0, sight: 0, hotel: 0, other: 0 };
+                                            return state.nearbyPOIs.map((poi) => {
+                                              let categoryLabel = 'POI';
+                                              const cat = poi.category || 'other';
+                                              if (cat === 'food') { categoryLabel = 'Food'; panelPoiCounters.food++; }
+                                              else if (cat === 'cafe') { categoryLabel = 'Cafe'; panelPoiCounters.cafe++; }
+                                              else if (cat === 'sight') { categoryLabel = 'Sight'; panelPoiCounters.sight++; }
+                                              else if (cat === 'hotel') { categoryLabel = 'Hotel'; panelPoiCounters.hotel++; }
+                                              else { panelPoiCounters.other++; }
+                                              const labelNum = panelPoiCounters[cat] || panelPoiCounters.other;
+                                              const poiLabel = `${categoryLabel} ${labelNum}`;
+                                              return (
+                                                <div 
+                                                  key={poi.id} 
+                                                  onClick={() => {
+                                                    window.dispatchEvent(new CustomEvent('show-poi-popup', { detail: poi }));
+                                                  }}
+                                                  className="flex justify-between items-start gap-2 p-1.5 rounded border transition-colors cursor-pointer"
+                                                  style={{
+                                                    background: 'var(--surface)',
+                                                    borderColor: 'var(--border)'
+                                                  }}
+                                                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-border)'; }}
+                                                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                                >
+                                                  <div className="min-w-0 flex-1">
+                                                    <div className="font-semibold truncate text-[9.5px] flex items-center gap-1" style={{ color: 'var(--text)' }}>
+                                                      <CategoryIcon iconType={cat} size={11} className="text-accent shrink-0" />
+                                                      <span className="text-[8px] font-mono px-1 py-0 rounded" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>{poiLabel}</span>
+                                                      <span>{poi.name}</span>
+                                                    </div>
+                                                    <div className="text-[8px] truncate" style={{ color: 'var(--muted)' }}>{poi.address}</div>
                                                   </div>
-                                                  <div className="text-[8px] truncate" style={{ color: 'var(--muted)' }}>{poi.address}</div>
+                                                  <div className="text-[8px] font-mono shrink-0 font-bold flex items-center gap-0.5" style={{ color: 'var(--warm)' }}>
+                                                    <Star size={9} className="fill-amber-400 text-amber-400 inline" /> {poi.rating}
+                                                  </div>
                                                 </div>
-                                                <div className="text-[8px] font-mono shrink-0 font-bold" style={{ color: 'var(--warm)' }}>
-                                                  ★ {poi.rating}
-                                                </div>
-                                              </div>
-                                            );
-                                          })}
+                                              );
+                                            });
+                                          })()}
                                         </div>
                                       ) : (
                                         <div className="text-[8px]" style={{ color: 'var(--muted)' }}>No nearby places found.</div>
                                       )}
                                     </div>
                                   </div>
+                                )}
+
+                                {/* Drag insertion indicator (below) */}
+                                {isDragOver && dragState.dragIdx !== null && dragState.dragIdx < idx && (
+                                  <div className="drag-insertion-line visible" />
                                 )}
 
                                 {commuteText && (
@@ -742,6 +853,79 @@ export default function ItineraryPanel() {
                             );
                           })
                         )}
+
+                        {/* Selected Lodgings / Stay at Hotel section at the end of day's activities */}
+                        {(() => {
+                          const selectedHotelIdsForDay = state.selectedHomestaysByDay?.[day.id] || [];
+                          const selectedHotelsForDay = state.homestays.filter(h => selectedHotelIdsForDay.includes(h.id));
+                          
+                          if (selectedHotelsForDay.length === 0) return null;
+
+                          return (
+                            <div className="pt-2.5 border-t mt-2.5 space-y-2" style={{ borderColor: 'var(--border)' }}>
+                              <div className="flex items-center justify-between px-0.5">
+                                <span className="text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 font-mono" style={{ color: 'var(--warm)' }}>
+                                  <Moon className="w-3 h-3 text-amber-400 inline shrink-0" /> Overnight Stay ({selectedHotelsForDay.length})
+                                </span>
+                              </div>
+
+                              {selectedHotelsForDay.map((hotel) => (
+                                <div
+                                  key={`stay-${hotel.id}`}
+                                  className="p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all"
+                                  style={{
+                                    background: 'var(--surface)',
+                                    borderColor: 'var(--warm)',
+                                    boxShadow: '0 2px 10px rgba(245, 158, 11, 0.08)'
+                                  }}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0 font-bold text-xs" style={{ background: 'var(--warm)', color: '#0a0c10' }}>
+                                      <CategoryIcon iconType="hotel" size={14} className="text-stone-900" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <h4 className="font-bold text-[11px] truncate" style={{ color: 'var(--text)' }}>
+                                        Stay at {hotel.name}
+                                      </h4>
+                                      <div className="flex items-center gap-2 text-[9px] font-mono" style={{ color: 'var(--muted)' }}>
+                                        <span style={{ color: 'var(--warm)' }} className="flex items-center gap-0.5"><Star size={9} className="fill-amber-400 text-amber-400 inline" /> {hotel.rating}</span>
+                                        <span>·</span>
+                                        <span>{currencySymbol}{hotel.pricePerNight.toLocaleString()} / night</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                                    <a
+                                      href={buildSinglePlaceGoogleMapsUrl(hotel, state.trip?.title)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="p-1 rounded text-muted hover:text-amber-400 hover:bg-white/[0.05] transition-all cursor-pointer"
+                                      title={`Open ${hotel.name} in Google Maps`}
+                                    >
+                                      <svg className="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                                      </svg>
+                                    </a>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleSelectHomestay(hotel.id, day.id);
+                                      }}
+                                      className="p-1 rounded text-muted hover:text-rose-400 hover:bg-white/[0.05] transition-all cursor-pointer"
+                                      title="Remove lodging reservation"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
 
                         {/* Card Footer Totals */}
                         <div
@@ -813,131 +997,111 @@ export default function ItineraryPanel() {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
                       </svg>
                     </div>
-                    Lodging Matches
+                    Lodging Matches {expandedDayId && state.trip?.days ? `(Day ${state.trip.days.find(d => d.id === expandedDayId)?.dayNumber || ''})` : ''}
                   </h3>
                   <p className="text-[9px] mt-0.5 ml-7" style={{ color: 'var(--muted)' }}>Ranked by route fit, price & ratings</p>
                 </div>
 
-                {expandedDayId ? (
-                  <div className="space-y-2 stagger-children">
-                    {visibleHomestays.length > 0 ? (
-                      visibleHomestays.map((home) => {
-                        const isSelected = state.selectedHomestayId === home.id;
-                        const activeDayNum = state.trip.days.find(d => d.id === expandedDayId)?.dayNumber;
-                        return (
-                          <div
-                            key={home.id}
-                            id={`homestay-card-${home.id}`}
-                            onMouseEnter={() => handleHoverHomestay(home.id)}
-                            onMouseLeave={() => handleHoverHomestay(null)}
-                            className="p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer"
-                            style={{
-                              background: isSelected
-                                ? 'var(--accent-dim)'
-                                : 'var(--surface-2)',
-                              borderColor: isSelected
-                                ? 'var(--accent-border)'
-                                : 'var(--border)'
-                            }}
-                          >
-                            <div className="flex justify-between items-start">
-                              <h4 className="font-bold text-[11px] flex items-center gap-1.5" style={{ color: 'var(--text)' }}>
-                                <span className="text-sm opacity-70">⌂</span>
-                                {home.name}
-                              </h4>
-                              <div className="flex items-center gap-1 text-[9px] font-mono" style={{ color: 'var(--warm)' }}>
-                                <span>★</span>
-                                <span>{home.rating}</span>
-                                <span style={{ color: 'var(--muted)' }}>({home.reviewCount})</span>
-                              </div>
-                            </div>
-
-                            <p className="text-[9px] font-medium mt-1.5 font-mono flex items-center gap-1" style={{ color: 'var(--accent)' }}>
-                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                              </svg>
-                              {home.avgCommuteMinutes} min avg to Day {activeDayNum || '?'} stops
-                            </p>
-
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {home.amenities.map((amenity, idx) => (
-                                <span
-                                  key={idx}
-                                  className="px-1.5 py-0.5 rounded border text-[8px] font-mono"
-                                  style={{
-                                    background: 'var(--surface-3)',
-                                    borderColor: 'var(--border)',
-                                    color: 'var(--muted)'
-                                  }}
-                                >
-                                  {amenity}
-                                </span>
-                              ))}
-                            </div>
-
-                            <div className="h-[1px] my-2.5" style={{ background: 'var(--border)' }}></div>
-
-                            <div className="flex justify-between items-center">
-                              <div>
-                                <span className="font-mono text-xs font-bold" style={{ color: 'var(--text)' }}>
-                                  {currencySymbol}{home.pricePerNight.toLocaleString()}
-                                </span>
-                                <span className="text-[8px]" style={{ color: 'var(--muted)' }}> / night</span>
-                              </div>
-                              <button
-                                onClick={() => handleSelectHomestay(home.id)}
-                                className="px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all transform active:scale-95 cursor-pointer"
-                                style={
-                                  isSelected
-                                    ? {
-                                        background: 'var(--accent)',
-                                        color: 'var(--bg)'
-                                      }
-                                    : {
-                                        background: 'var(--surface-3)',
-                                        border: '1px solid var(--border)',
-                                        color: 'var(--text)'
-                                      }
-                                }
-                              >
-                                {isSelected ? '✓ Selected' : 'Choose'}
-                              </button>
+                <div className="space-y-2 stagger-children">
+                  {visibleHomestays.length > 0 ? (
+                    visibleHomestays.map((home) => {
+                      const activeDayId = expandedDayId;
+                      const daySelectedIds = activeDayId ? (state.selectedHomestaysByDay?.[activeDayId] || []) : [];
+                      const isSelected = Boolean(activeDayId && daySelectedIds.includes(home.id));
+                      const activeDayNum = activeDayId ? state.trip?.days?.find(d => d.id === activeDayId)?.dayNumber : null;
+                      return (
+                        <div
+                          key={home.id}
+                          id={`homestay-card-${home.id}`}
+                          onMouseEnter={() => handleHoverHomestay(home.id)}
+                          onMouseLeave={() => handleHoverHomestay(null)}
+                          className="p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer"
+                          style={{
+                            background: isSelected
+                              ? 'var(--accent-dim)'
+                              : 'var(--surface-2)',
+                            borderColor: isSelected
+                              ? 'var(--accent-border)'
+                              : 'var(--border)'
+                          }}
+                        >
+                          <div className="flex justify-between items-start">
+                            <h4 className="font-bold text-[11px] flex items-center gap-1.5" style={{ color: 'var(--text)' }}>
+                              <CategoryIcon iconType="hotel" size={12} className="text-accent" />
+                              {home.name}
+                            </h4>
+                            <div className="flex items-center gap-1 text-[9px] font-mono" style={{ color: 'var(--warm)' }}>
+                              <Star size={9} className="fill-amber-400 text-amber-400 inline" />
+                              <span>{home.rating}</span>
+                              <span style={{ color: 'var(--muted)' }}>({home.reviewCount})</span>
                             </div>
                           </div>
-                        );
-                      })
-                    ) : (
-                      <div
-                        className="p-4 rounded-xl border text-center"
-                        style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
-                      >
-                        <p className="text-[10px]" style={{ color: 'var(--muted)' }}>
-                          No nearby lodging found for this day's stops.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div
-                    className="p-4 rounded-xl border text-center space-y-2"
-                    style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
-                  >
+
+                          <p className="text-[9px] font-medium mt-1.5 font-mono flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                            </svg>
+                            {home.avgCommuteMinutes} min avg to {activeDayNum ? `Day ${activeDayNum}` : 'itinerary'} stops
+                          </p>
+
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {home.amenities.map((amenity, idx) => (
+                              <span
+                                key={idx}
+                                className="px-1.5 py-0.5 rounded border text-[8px] font-mono"
+                                style={{
+                                  background: 'var(--surface-3)',
+                                  borderColor: 'var(--border)',
+                                  color: 'var(--muted)'
+                                }}
+                              >
+                                {amenity}
+                              </span>
+                            ))}
+                          </div>
+
+                          <div className="h-[1px] my-2.5" style={{ background: 'var(--border)' }}></div>
+
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <span className="font-mono text-xs font-bold" style={{ color: 'var(--text)' }}>
+                                {currencySymbol}{home.pricePerNight.toLocaleString()}
+                              </span>
+                              <span className="text-[8px]" style={{ color: 'var(--muted)' }}> / night</span>
+                            </div>
+                            <button
+                              onClick={() => handleSelectHomestay(home.id, activeDayId)}
+                              className="px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all transform active:scale-95 cursor-pointer"
+                              style={
+                                isSelected
+                                  ? {
+                                      background: 'var(--accent)',
+                                      color: 'var(--bg)'
+                                    }
+                                  : {
+                                      background: 'var(--surface-3)',
+                                      border: '1px solid var(--border)',
+                                      color: 'var(--text)'
+                                    }
+                              }
+                            >
+                              {isSelected ? '✓ Selected' : 'Choose'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
                     <div
-                      className="w-8 h-8 rounded-lg mx-auto flex items-center justify-center"
-                      style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)' }}
+                      className="p-4 rounded-xl border text-center"
+                      style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: 'var(--accent)' }}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
-                      </svg>
+                      <p className="text-[10px]" style={{ color: 'var(--muted)' }}>
+                        No lodging matches found.
+                      </p>
                     </div>
-                    <p className="text-[10px] font-semibold" style={{ color: 'var(--text)' }}>
-                      Select a day to see lodging
-                    </p>
-                    <p className="text-[9px] leading-relaxed" style={{ color: 'var(--muted)' }}>
-                      Click on a day above to discover nearby homestays and lodging options matched to that day's route.
-                    </p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
           </>
@@ -953,7 +1117,9 @@ export default function ItineraryPanel() {
           >
             <div className="flex justify-between items-center pb-3 border-b" style={{ borderColor: 'var(--border)' }}>
               <h3 className="font-bold text-sm flex items-center gap-2" style={{ color: 'var(--text)' }}>
-                <span className="w-6 h-6 rounded-lg flex items-center justify-center text-xs" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>📍</span>
+                <span className="w-6 h-6 rounded-lg flex items-center justify-center text-xs" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>
+                  <MapPin className="w-3.5 h-3.5" />
+                </span>
                 Add Stop to Day {state.trip?.days?.find(d => d.id === addStopModalDayId)?.dayNumber || ''}
               </h3>
               <button
@@ -1026,7 +1192,7 @@ export default function ItineraryPanel() {
                 if (isProjExceeded) {
                   return (
                     <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-2.5">
-                      <span className="text-base shrink-0">⚠️</span>
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 inline mt-0.5" />
                       <div className="space-y-0.5">
                         <strong className="block font-bold text-rose-400">Budget Exceeded Warning</strong>
                         <p className="text-[11px] leading-relaxed text-rose-300/90">

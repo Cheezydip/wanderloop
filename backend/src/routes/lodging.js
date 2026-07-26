@@ -3,8 +3,11 @@ import { poiCache } from '../utils/cache.js';
 
 const router = Router();
 
-// Use the reliable mail.ru Overpass mirror (primary overpass-api.de often 504s)
+// Multiple reliable Overpass API mirrors
 const OVERPASS_MIRRORS = [
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.nchc.org.tw/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://overpass-api.de/api/interpreter'
 ];
@@ -23,11 +26,11 @@ router.get('/lodgings', async (req, res) => {
   try {
     const cacheKey = `lodgings-${lat.toFixed(4)}-${lng.toFixed(4)}-${radius}`;
     const cachedData = poiCache.get(cacheKey);
-    if (cachedData) {
+    if (cachedData && cachedData.length > 0) {
       return res.status(200).json(cachedData);
     }
 
-    const lodgings = await fetchRealLodgings(lat, lng, radius);
+    const lodgings = await fetchRealLodgingsWithExpansion(lat, lng, radius);
     if (lodgings.length > 0) {
       poiCache.set(cacheKey, lodgings);
     }
@@ -39,21 +42,38 @@ router.get('/lodgings', async (req, res) => {
   }
 });
 
+async function fetchRealLodgingsWithExpansion(lat, lng, initialRadius) {
+  const radiiToTry = [Math.max(initialRadius, 2000), 5000, 10000];
 
-/**
- * Fetch real hotels, guest houses, and hostels from OpenStreetMap via Overpass API.
- * Uses nwr (node/way/relation) with regex matching for efficiency.
- */
-async function fetchRealLodgings(lat, lng, radius) {
+  for (const searchRadius of radiiToTry) {
+    const lodgings = await fetchOverpassLodgings(lat, lng, searchRadius);
+    if (lodgings.length >= 4) {
+      console.log(`[Lodging]: Found ${lodgings.length} accommodations via Overpass at radius ${searchRadius}m`);
+      return lodgings;
+    }
+  }
+
+  // Try Nominatim fallback if Overpass returned low results
+  console.log(`[Lodging]: Overpass returned sparse accommodations for [${lat}, ${lng}]. Attempting Nominatim fallback search...`);
+  const nominatimLodgings = await fetchNominatimLodgings(lat, lng);
+  if (nominatimLodgings.length > 0) {
+    return nominatimLodgings;
+  }
+
+  // Simulated local mock data
+  console.log(`Generating fallback mock lodgings for coordinate [${lat}, ${lng}]`);
+  return generateFallbackLodgings(lat, lng);
+}
+
+async function fetchOverpassLodgings(lat, lng, searchRadius) {
   const overpassQuery = `
-    [out:json][timeout:25];
+    [out:json][timeout:20];
     (
-      nwr["tourism"~"hotel|guest_house|hostel"]["name"](around:${radius},${lat},${lng});
+      nwr["tourism"~"hotel|guest_house|hostel|resort|motel|chalet|apartment|homestay"]["name"](around:${searchRadius},${lat},${lng});
     );
-    out center 15;
+    out center 30;
   `;
 
-  let data = null;
   for (const mirror of OVERPASS_MIRRORS) {
     try {
       const response = await fetch(mirror, {
@@ -63,59 +83,82 @@ async function fetchRealLodgings(lat, lng, radius) {
           'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
         },
         body: `data=${encodeURIComponent(overpassQuery)}`,
-        signal: AbortSignal.timeout(30000)
+        signal: AbortSignal.timeout(12000)
       });
 
       if (response.ok) {
-        data = await response.json();
-        break;
+        const data = await response.json();
+        if (data && data.elements && data.elements.length > 0) {
+          const seen = new Set();
+          const unique = [];
+          for (const el of data.elements) {
+            const name = el.tags?.name;
+            if (!name || seen.has(name.toLowerCase())) continue;
+            seen.add(name.toLowerCase());
+            unique.push(el);
+            if (unique.length >= 7) break;
+          }
+          if (unique.length > 0) {
+            return unique.map((el, i) => formatLodging(el, i, lat, lng));
+          }
+        }
       }
     } catch (err) {
-      console.warn(`Overpass mirror ${mirror} failed:`, err.message);
+      console.warn(`Overpass lodging mirror ${mirror} failed:`, err.message);
     }
   }
 
-  if (data && data.elements && data.elements.length > 0) {
-    // De-duplicate by name, take top 3
-    const seen = new Set();
-    const unique = [];
-    for (const el of data.elements) {
-      const name = el.tags?.name;
-      if (!name || seen.has(name.toLowerCase())) continue;
-      seen.add(name.toLowerCase());
-      unique.push(el);
-      if (unique.length >= 3) break;
-    }
-
-    return unique.map((el, i) => formatLodging(el, i, lat, lng));
-  }
-
-  // 2. Try Geoapify API key fallback
-  if (process.env.GEOAPIFY_API_KEY) {
-    try {
-      console.log(`OpenStreetMap returned no results. Querying Geoapify API backup for coordinates [${lat}, ${lng}]`);
-      const geoResults = await fetchGeoapifyLodgings(lat, lng, radius);
-      if (geoResults.length > 0) return geoResults;
-    } catch (err) {
-      console.error('Geoapify lodging backup failed:', err.message);
-    }
-  }
-
-  // 3. Try Foursquare API key fallback
-  if (process.env.FOURSQUARE_API_KEY) {
-    try {
-      console.log(`OpenStreetMap returned no results. Querying Foursquare API backup for coordinates [${lat}, ${lng}]`);
-      const fsqResults = await fetchFoursquareLodgings(lat, lng, radius);
-      if (fsqResults.length > 0) return fsqResults;
-    } catch (err) {
-      console.error('Foursquare lodging backup failed:', err.message);
-    }
-  }
-
-  // 4. Simulated local mock data
-  console.log(`Generating fallback mock lodgings for coordinate [${lat}, ${lng}]`);
-  return generateFallbackLodgings(lat, lng);
+  return [];
 }
+
+async function fetchNominatimLodgings(lat, lng) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=hotel&format=json&limit=8&viewbox=${lng - 0.08},${lat + 0.08},${lng + 0.08},${lat - 0.08}&bounded=1`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
+      },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (res.ok) {
+      const items = await res.json();
+      const seen = new Set();
+      const lodgings = [];
+
+      for (const item of items) {
+        const name = item.display_name.split(',')[0].trim();
+        if (!name || seen.has(name.toLowerCase())) continue;
+        seen.add(name.toLowerCase());
+
+        const elLat = parseFloat(item.lat);
+        const elLng = parseFloat(item.lon);
+        const distKm = haversineDistance(lat, lng, elLat, elLng);
+        const commuteMinutes = Math.max(2, Math.round(distKm / 0.5));
+        const pricePerNight = 5000 + lodgings.length * 3000 + Math.floor(Math.random() * 2000);
+
+        lodgings.push({
+          id: `lodging-nom-${item.place_id}`,
+          name: name,
+          lat: elLat,
+          lng: elLng,
+          pricePerNight,
+          rating: parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
+          reviewCount: Math.floor(20 + Math.random() * 180),
+          amenities: ['Free Wi-Fi', 'Breakfast', 'Air Conditioning', 'Luggage Storage'],
+          avgCommuteMinutes: commuteMinutes,
+          rationale: `Real accommodation found via Nominatim ${distKm.toFixed(1)}km from your planned stops.`
+        });
+        if (lodgings.length >= 7) break;
+      }
+      return lodgings;
+    }
+  } catch (err) {
+    console.warn('Nominatim lodging fallback search failed:', err.message);
+  }
+  return [];
+}
+
 
 async function fetchFoursquareLodgings(lat, lng, radius) {
   const apiKey = process.env.FOURSQUARE_API_KEY;

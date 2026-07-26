@@ -342,7 +342,7 @@ export default function LandingPage() {
   function handleSubmit(promptOverride) {
     const text = promptOverride || inputValue;
     if (!text.trim()) return;
-    dispatch({ type: 'START_INTERVIEW', payload: text });
+    dispatch({ type: 'START_QUESTIONNAIRE', payload: text });
   }
 
   /* Prompt chips */

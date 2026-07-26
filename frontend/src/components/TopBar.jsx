@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTrip } from '../context/TripContext';
 import { useTheme } from '../context/ThemeContext';
 import { getCurrencySymbol } from '../utils/currency';
+import ExportModal from './ExportModal';
+import { AlertTriangle } from 'lucide-react';
 
 export default function TopBar() {
   const { state, dispatch } = useTrip();
@@ -10,6 +12,7 @@ export default function TopBar() {
   const [isEditingBudget, setIsEditingBudget] = useState(false);
   const [tempBudget, setTempBudget] = useState(state.trip?.budget || 25000);
   const [saveText, setSaveText] = useState('Save');
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const budgetRef = useRef(null);
 
   useEffect(() => {
@@ -53,7 +56,8 @@ export default function TopBar() {
 
   const handleSave = useCallback(() => {
     setSaveText('Saved ✓');
-    setTimeout(() => setSaveText('Save'), 2000);
+    setIsExportModalOpen(true);
+    setTimeout(() => setSaveText('Save'), 2500);
   }, []);
 
   const perDay = numDays > 0 ? Math.round(totalSpend / numDays) : 0;
@@ -155,7 +159,7 @@ export default function TopBar() {
               >
                 {totalSpend > budgetLimit ? (
                   <span className="flex items-center gap-1 text-rose-400 font-bold">
-                    <span>⚠️</span>
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0 inline" />
                     <span>Exceeded by {currencySymbol}{(totalSpend - budgetLimit).toLocaleString()}</span>
                   </span>
                 ) : (
@@ -232,7 +236,7 @@ export default function TopBar() {
                   {totalSpend > budgetLimit && (
                     <div className="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[10px] font-semibold flex items-center justify-between">
                       <span className="flex items-center gap-1">
-                        <span>⚠️</span>
+                        <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0 inline" />
                         <span>Over Budget</span>
                       </span>
                       <span className="font-mono font-bold">
@@ -314,6 +318,27 @@ export default function TopBar() {
               </svg>
               {saveText}
             </button>
+
+            {/* New Trip / Exit Button */}
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to exit this itinerary and start a new trip?')) {
+                  dispatch({ type: 'START_NEW_TRIP' });
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-[6px] rounded-lg text-xs font-semibold cursor-pointer border transition-all-300 hover:bg-rose-500/15 hover:border-rose-500/40 hover:text-rose-400"
+              style={{
+                background: 'var(--surface-2, rgba(255,255,255,0.03))',
+                borderColor: 'var(--border, rgba(255,255,255,0.06))',
+                color: 'var(--muted)',
+              }}
+              title="Exit current itinerary and start a new trip"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              <span className="hidden sm:inline">New Trip</span>
+            </button>
           </>
         )}
 
@@ -378,6 +403,16 @@ export default function TopBar() {
           </button>
         </div>
       </div>
+
+      {/* Export Modal for Google Maps, Apple Maps, GPX, and KML */}
+      <ExportModal
+        trip={state.trip}
+        homestays={state.homestays}
+        selectedHomestaysByDay={state.selectedHomestaysByDay}
+        selectedHomestayId={state.selectedHomestayId}
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+      />
     </header>
   );
 }

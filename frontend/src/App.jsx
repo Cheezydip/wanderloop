@@ -5,10 +5,11 @@ import ChatPanel from './features/chat/ChatPanel';
 import MapPanel from './features/map/MapPanel';
 import ItineraryPanel from './features/itinerary/ItineraryPanel';
 import LandingPage from './features/landing/LandingPage';
+import QuestionnairePage from './features/questionnaire/QuestionnairePage';
 
 export default function App() {
   const { state, dispatch } = useTrip();
-  const { activeTab, hasTrip, isInterviewMode } = state;
+  const { activeTab, hasTrip, isInterviewMode, showQuestionnaire } = state;
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
 
@@ -104,7 +105,10 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 flex overflow-hidden relative">
-        {!hasTrip ? (
+        {showQuestionnaire ? (
+          /* ─── Questionnaire Page ─── */
+          <QuestionnairePage />
+        ) : !hasTrip ? (
           /* ─── Landing Page ─── */
           <LandingPage />
         ) : isMobile ? (

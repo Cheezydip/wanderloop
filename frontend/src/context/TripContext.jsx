@@ -1,6 +1,32 @@
-import { createContext, useContext, useReducer } from 'react';
+import { createContext, useContext, useReducer, useEffect } from 'react';
 import { mockTrip, mockHomestays, mockKyotoTrip, mockOsakaTrip, mockHakoneTrip } from '../data/mockTrip';
 import { getTripCurrency, getDefaultBudgetLimit } from '../utils/currency';
+
+const TRIP_STORAGE_KEY = 'wanderloop_active_trip';
+
+function loadInitialState(defaultState) {
+  try {
+    const saved = localStorage.getItem(TRIP_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.hasTrip && parsed.trip) {
+        return {
+          ...defaultState,
+          ...parsed,
+          isGenerating: false,
+          loadingPOIs: false,
+          hoveredHomestayId: null,
+          hoveredStopId: null,
+          activeStopId: null,
+          toast: null,
+        };
+      }
+    }
+  } catch (err) {
+    console.error('Failed to restore trip state from localStorage:', err);
+  }
+  return defaultState;
+}
 
 export const DEFAULT_BUDGET_ITEMS = [
   { name: 'Accommodation (3 nights)', amount: 12000, color: '#2dd4bf' },
@@ -9,7 +35,7 @@ export const DEFAULT_BUDGET_ITEMS = [
   { name: 'Local transport', amount: 2000, color: '#84cc16' }
 ];
 
-export function syncBudgetItems(trip, homestays, selectedHomestayId) {
+export function syncBudgetItems(trip, homestays, selectedHomestaysByDay, legacySelectedId) {
   if (!trip) return DEFAULT_BUDGET_ITEMS;
 
   const { code } = getTripCurrency(trip);
@@ -25,10 +51,25 @@ export function syncBudgetItems(trip, homestays, selectedHomestayId) {
     });
   }
 
-  // Determine accommodation cost from selected hotel if available
+  // Determine accommodation cost from selected hotels across all days
   let accomOverride = null;
-  if (selectedHomestayId && Array.isArray(homestays)) {
-    const selected = homestays.find(h => h.id === selectedHomestayId);
+  if (selectedHomestaysByDay && typeof selectedHomestaysByDay === 'object' && Array.isArray(homestays)) {
+    let totalAccom = 0;
+    let hasAnySelected = false;
+    Object.values(selectedHomestaysByDay).flat().forEach(id => {
+      const selected = homestays.find(h => h.id === id);
+      if (selected && selected.pricePerNight) {
+        totalAccom += selected.pricePerNight;
+        hasAnySelected = true;
+      }
+    });
+    if (hasAnySelected) {
+      accomOverride = totalAccom;
+    }
+  }
+
+  if (accomOverride === null && legacySelectedId && Array.isArray(homestays)) {
+    const selected = homestays.find(h => h.id === legacySelectedId);
     if (selected && selected.pricePerNight) {
       accomOverride = selected.pricePerNight * daysCount;
     }
@@ -52,10 +93,10 @@ export function syncBudgetItems(trip, homestays, selectedHomestayId) {
     });
 
     if (!foundActivity) {
-      updated.push({ name: 'Activities & entries', amount: activityTotal, color: '#f43f5e' });
+      updated.push({ name: 'Activity entries', amount: activityTotal, color: '#f43f5e' });
     }
-    if (accomOverride !== null && !foundAccom) {
-      updated.push({ name: `Accommodation (${daysCount} night${daysCount > 1 ? 's' : ''})`, amount: accomOverride, color: '#2dd4bf' });
+    if (!foundAccom && accomOverride !== null) {
+      updated.push({ name: 'Accommodation', amount: accomOverride, color: '#2dd4bf' });
     }
     return updated;
   }
@@ -114,6 +155,7 @@ export function syncBudgetItems(trip, homestays, selectedHomestayId) {
 const initialState = {
   trip: null,
   homestays: [],
+  selectedHomestaysByDay: {}, // e.g. { 'day-1': ['lodging-1', 'lodging-2'], 'day-2': ['lodging-3'] }
   selectedHomestayId: null,
   hoveredHomestayId: null,
   activeTab: 'map',
@@ -125,6 +167,8 @@ const initialState = {
   isGenerating: false,
   isInterviewMode: false,
   hasTrip: false, // false = show Empty State
+  showQuestionnaire: false, // true = show questionnaire page
+  questionnairePrompt: '', // original prompt from landing page
   mapLayer: 'stops', // 'stops' | 'homestays'
   activeHomestayOnMapId: null, // for homestay popover on map
   highlightedDayId: null, // for legend-based day filtering
@@ -156,7 +200,7 @@ function tripReducer(state, action) {
         ...action.payload,
         messages: action.payload.messages || state.trip?.messages || []
       };
-      const newItems = syncBudgetItems(newTrip, state.homestays, state.selectedHomestayId);
+      const newItems = syncBudgetItems(newTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId);
       const computedTotal = newItems.reduce((acc, i) => acc + i.amount, 0);
       if (!newTrip.budget || newTrip.budget === 25000 && getTripCurrency(newTrip).code !== 'JPY') {
         newTrip.budget = computedTotal > 0 ? Math.ceil(computedTotal * 1.15) : getDefaultBudgetLimit(getTripCurrency(newTrip).code);
@@ -166,6 +210,7 @@ function tripReducer(state, action) {
         trip: newTrip,
         budgetItems: newItems,
         hasTrip: true,
+        isInterviewMode: false,
         mapCenter: null
       };
     }
@@ -182,7 +227,7 @@ function tripReducer(state, action) {
         return day;
       });
       const updatedTrip = { ...state.trip, days: updatedDays };
-      const newItems = syncBudgetItems(updatedTrip, state.homestays, state.selectedHomestayId);
+      const newItems = syncBudgetItems(updatedTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId);
       const newTotalSpend = newItems.reduce((acc, i) => acc + i.amount, 0);
       const budgetLimit = updatedTrip.budget || 25000;
 
@@ -192,7 +237,7 @@ function tripReducer(state, action) {
         const exceeded = newTotalSpend - budgetLimit;
         newToast = {
           type: 'warning',
-          message: `⚠️ Stop added! Budget exceeded by ${sym}${exceeded.toLocaleString()}`
+          message: `Stop added! Budget exceeded by ${sym}${exceeded.toLocaleString()}`
         };
       }
 
@@ -215,7 +260,7 @@ function tripReducer(state, action) {
         return day;
       });
       const updatedTrip = { ...state.trip, days: updatedDays };
-      const newItems = syncBudgetItems(updatedTrip, state.homestays, state.selectedHomestayId);
+      const newItems = syncBudgetItems(updatedTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId);
       return {
         ...state,
         trip: updatedTrip,
@@ -251,19 +296,67 @@ function tripReducer(state, action) {
       };
       
     case 'SELECT_HOMESTAY': {
-      const newSelectedId = action.payload;
-      const newBudgetItems = syncBudgetItems(state.trip, state.homestays, newSelectedId);
+      let dayId = null;
+      let homestayId = null;
+
+      if (typeof action.payload === 'object' && action.payload !== null) {
+        dayId = action.payload.dayId;
+        homestayId = action.payload.homestayId;
+      } else {
+        homestayId = action.payload;
+      }
+
+      if (!homestayId) {
+        const newMap = {};
+        const newBudgetItems = syncBudgetItems(state.trip, state.homestays, newMap, null);
+        return {
+          ...state,
+          selectedHomestaysByDay: newMap,
+          selectedHomestayId: null,
+          budgetItems: newBudgetItems,
+        };
+      }
+
+      if (!dayId) {
+        const home = state.homestays?.find(h => h.id === homestayId);
+        if (home && home.dayId) {
+          dayId = home.dayId;
+        } else if (state.highlightedDayId) {
+          dayId = state.highlightedDayId;
+        } else if (state.trip?.days && state.trip.days.length > 0) {
+          dayId = state.trip.days[0].id;
+        } else {
+          dayId = 'day-1';
+        }
+      }
+
+      const currentDayList = state.selectedHomestaysByDay?.[dayId] || [];
+      const isAlreadySelected = currentDayList.includes(homestayId);
+
+      const updatedDayList = isAlreadySelected
+        ? currentDayList.filter(id => id !== homestayId)
+        : [...currentDayList, homestayId];
+
+      const newSelectedMap = {
+        ...(state.selectedHomestaysByDay || {}),
+        [dayId]: updatedDayList
+      };
+
+      const lastSelectedId = updatedDayList[updatedDayList.length - 1] || null;
+      const newBudgetItems = syncBudgetItems(state.trip, state.homestays, newSelectedMap, lastSelectedId);
       const newTotal = newBudgetItems.reduce((acc, i) => acc + i.amount, 0);
       const budgetLimit = state.trip?.budget || 25000;
       let toast = state.toast;
       if (newTotal > budgetLimit) {
         const sym = getTripCurrency(state.trip).symbol;
         const exceeded = newTotal - budgetLimit;
-        toast = { type: 'warning', message: `⚠️ Hotel selected! Budget exceeded by ${sym}${exceeded.toLocaleString()}` };
+        toast = { type: 'warning', message: `Hotel selected! Budget exceeded by ${sym}${exceeded.toLocaleString()}` };
       }
+
       return {
         ...state,
-        selectedHomestayId: newSelectedId,
+        selectedHomestaysByDay: newSelectedMap,
+        selectedHomestayId: lastSelectedId,
         budgetItems: newBudgetItems,
         toast,
       };
@@ -363,13 +456,36 @@ function tripReducer(state, action) {
         budgetItems: []
       };
 
+    case 'START_QUESTIONNAIRE':
+      return {
+        ...state,
+        showQuestionnaire: true,
+        questionnairePrompt: action.payload || '',
+      };
+
+    case 'COMPLETE_QUESTIONNAIRE': {
+      // Combine original prompt with questionnaire answers into enriched prompt
+      const enrichedPrompt = action.payload;
+      return {
+        ...state,
+        showQuestionnaire: false,
+        questionnairePrompt: '',
+      };
+    }
+
     case 'START_NEW_TRIP':
+      try {
+        localStorage.removeItem(TRIP_STORAGE_KEY);
+      } catch (err) {}
       return {
         ...state,
         hasTrip: false,
-        trip: { ...state.trip, messages: [], days: [] },
+        showQuestionnaire: false,
+        questionnairePrompt: '',
+        trip: null,
         activeStopId: null,
         hoveredStopId: null,
+        selectedHomestaysByDay: {},
         selectedHomestayId: null,
         hoveredHomestayId: null,
         activeHomestayOnMapId: null,
@@ -377,7 +493,7 @@ function tripReducer(state, action) {
         isInterviewMode: false,
         mapLayer: 'stops',
         routesData: {},
-        budgetItems: [],
+        budgetItems: DEFAULT_BUDGET_ITEMS,
       };
 
     case 'LOAD_TRIP': {
@@ -399,7 +515,7 @@ function tripReducer(state, action) {
         isGenerating: false,
         isInterviewMode: false,
         routesData: {},
-        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestayId),
+        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId),
       };
     }
 
@@ -415,7 +531,7 @@ function tripReducer(state, action) {
         selectedTrip = mockHakoneTrip;
       }
 
-      const currentMessages = state.trip.messages;
+      const currentMessages = state.trip?.messages || [];
       const finalMessage = {
         id: `ai-welcome-${Date.now()}`,
         role: 'assistant',
@@ -433,7 +549,7 @@ function tripReducer(state, action) {
         isGenerating: false,
         isInterviewMode: false,
         routesData: {},
-        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestayId)
+        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId)
       };
     }
       
@@ -469,7 +585,54 @@ function tripReducer(state, action) {
 const TripContext = createContext(undefined);
 
 export function TripProvider({ children }) {
-  const [state, dispatch] = useReducer(tripReducer, initialState);
+  const [state, dispatch] = useReducer(tripReducer, initialState, loadInitialState);
+
+  // Sync active trip state to localStorage
+  useEffect(() => {
+    if (state.hasTrip && state.trip) {
+      try {
+        const stateToPersist = {
+          trip: state.trip,
+          hasTrip: state.hasTrip,
+          selectedHomestaysByDay: state.selectedHomestaysByDay || {},
+          selectedHomestayId: state.selectedHomestayId || null,
+          budgetItems: state.budgetItems || [],
+          mapLayer: state.mapLayer || 'stops',
+          activeTab: state.activeTab || 'map',
+          showChat: state.showChat !== false,
+          showHomestays: state.showHomestays !== false,
+          highlightedDayId: state.highlightedDayId || null,
+          showQuestionnaire: state.showQuestionnaire || false,
+          questionnairePrompt: state.questionnairePrompt || '',
+          isInterviewMode: state.isInterviewMode || false,
+        };
+        localStorage.setItem(TRIP_STORAGE_KEY, JSON.stringify(stateToPersist));
+      } catch (err) {
+        console.error('Failed to save trip state to localStorage:', err);
+      }
+    } else {
+      try {
+        localStorage.removeItem(TRIP_STORAGE_KEY);
+      } catch (err) {
+        console.error('Failed to remove trip state from localStorage:', err);
+      }
+    }
+  }, [
+    state.hasTrip,
+    state.trip,
+    state.selectedHomestaysByDay,
+    state.selectedHomestayId,
+    state.budgetItems,
+    state.mapLayer,
+    state.activeTab,
+    state.showChat,
+    state.showHomestays,
+    state.highlightedDayId,
+    state.showQuestionnaire,
+    state.questionnairePrompt,
+    state.isInterviewMode,
+  ]);
+
   return (
     <TripContext.Provider value={{ state, dispatch }}>
       {children}
