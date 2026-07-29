@@ -15,7 +15,7 @@ async function safeFetchJson(url, options = {}) {
   }
 
   if (!res.ok) {
-    throw new Error(data.error || `Server request failed (${res.status})`);
+    throw new Error(data.error || data.message || `Server request failed (${res.status})`);
   }
 
   return data;
@@ -98,13 +98,13 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const updateProfile = async (name, email, currentPassword, newPassword) => {
+  const updateProfile = async (name, email, currentPassword, newPassword, avatar) => {
     setError(null);
     try {
       const data = await safeFetchJson('/api/auth/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, currentPassword, newPassword }),
+        body: JSON.stringify({ name, email, currentPassword, newPassword, avatar }),
       });
       setUser(data);
       return data;

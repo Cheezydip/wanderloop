@@ -22,6 +22,11 @@ function generateTokenAndSetCookie(res, userId) {
   return token;
 }
 
+function getAutoAvatarUrl(name, email) {
+  const seed = encodeURIComponent((name || email || 'Traveler').trim());
+  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}&backgroundColor=0d9488,0f766e,14b8a6,065f46`;
+}
+
 // POST /api/auth/google - Authenticate using Google ID Token or Access Token
 router.post('/auth/google', async (req, res) => {
   try {
@@ -72,6 +77,7 @@ router.post('/auth/google', async (req, res) => {
     }
 
     const lowercaseEmail = email.toLowerCase().trim();
+    const fallbackAvatar = picture || getAutoAvatarUrl(name, lowercaseEmail);
 
     // Find existing user by googleId or email
     let user = await User.findOne({ googleId });
@@ -80,8 +86,8 @@ router.post('/auth/google', async (req, res) => {
       user = await User.findOne({ email: lowercaseEmail });
       if (user) {
         user.googleId = googleId;
-        if (picture && !user.avatar) {
-          user.avatar = picture;
+        if (!user.avatar) {
+          user.avatar = fallbackAvatar;
         }
         await user.save();
       }
@@ -92,7 +98,7 @@ router.post('/auth/google', async (req, res) => {
         name: name.trim(),
         email: lowercaseEmail,
         googleId,
-        avatar: picture || '',
+        avatar: fallbackAvatar,
       });
     } else if (picture && user.avatar !== picture) {
       user.avatar = picture;
@@ -105,7 +111,7 @@ router.post('/auth/google', async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
-      avatar: user.avatar || '',
+      avatar: user.avatar || fallbackAvatar,
       wishlist: user.wishlist || [],
     });
   } catch (error) {
@@ -139,10 +145,13 @@ router.post('/auth/signup', async (req, res) => {
       return res.status(400).json({ error: 'An account with this email already exists' });
     }
 
+    const autoAvatar = getAutoAvatarUrl(name, email);
+
     const user = await User.create({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password,
+      avatar: autoAvatar,
     });
 
     generateTokenAndSetCookie(res, user._id);
@@ -151,7 +160,7 @@ router.post('/auth/signup', async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
-      avatar: user.avatar || '',
+      avatar: user.avatar || autoAvatar,
       wishlist: user.wishlist || [],
     });
   } catch (error) {
@@ -192,13 +201,18 @@ router.post('/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    if (!user.avatar) {
+      user.avatar = getAutoAvatarUrl(user.name, user.email);
+      await user.save();
+    }
+
     generateTokenAndSetCookie(res, user._id);
 
     return res.json({
       id: user._id,
       name: user.name,
       email: user.email,
-      avatar: user.avatar || '',
+      avatar: user.avatar,
       wishlist: user.wishlist || [],
     });
   } catch (error) {
@@ -217,24 +231,40 @@ router.post('/auth/logout', (req, res) => {
 });
 
 // GET /api/auth/me
-router.get('/auth/me', protect, (req, res) => {
-  return res.json({
-    id: req.user._id,
-    name: req.user.name,
-    email: req.user.email,
-    avatar: req.user.avatar || '',
-    wishlist: req.user.wishlist || [],
-  });
+router.get('/auth/me', protect, async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authorized' });
+    }
+    const user = req.user;
+    if (!user.avatar) {
+      user.avatar = getAutoAvatarUrl(user.name, user.email);
+      await user.save();
+    }
+    return res.json({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      wishlist: user.wishlist || [],
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to retrieve profile' });
+  }
 });
 
 // PUT /api/auth/profile - Update username / email / password
 router.put('/auth/profile', protect, async (req, res) => {
   try {
-    const { name, email, currentPassword, newPassword } = req.body;
+    const { name, email, avatar, currentPassword, newPassword } = req.body;
     const user = await User.findById(req.user._id);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (avatar && typeof avatar === 'string') {
+      user.avatar = avatar.trim();
     }
 
     if (name && name.trim()) {
@@ -278,7 +308,7 @@ router.put('/auth/profile', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('[PUT /api/auth/profile error]:', error);
-    return res.status(500).json({ error: 'Failed to update profile' });
+    return res.status(500).json({ error: error.message || 'Failed to update profile' });
   }
 });
 

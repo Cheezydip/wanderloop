@@ -16,6 +16,21 @@ import {
   ArrowRight,
 } from 'lucide-react';
 
+export const PRESET_AVATARS = [
+  { id: 'adventurer-1', name: 'The Explorer', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Felix&backgroundColor=0d9488' },
+  { id: 'adventurer-2', name: 'The Nomad', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Aneka&backgroundColor=0f766e' },
+  { id: 'adventurer-3', name: 'The Backpacker', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Milo&backgroundColor=14b8a6' },
+  { id: 'adventurer-4', name: 'The Voyager', url: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Zion&backgroundColor=065f46' },
+  { id: 'lorelei-1', name: 'The Wanderer', url: 'https://api.dicebear.com/7.x/lorelei/svg?seed=Jasper&backgroundColor=0d9488' },
+  { id: 'lorelei-2', name: 'The Hiker', url: 'https://api.dicebear.com/7.x/lorelei/svg?seed=Sasha&backgroundColor=0f766e' },
+  { id: 'lorelei-3', name: 'The Pilot', url: 'https://api.dicebear.com/7.x/lorelei/svg?seed=Kai&backgroundColor=14b8a6' },
+  { id: 'lorelei-4', name: 'The Captain', url: 'https://api.dicebear.com/7.x/lorelei/svg?seed=Nala&backgroundColor=065f46' },
+  { id: 'big-smile-1', name: 'Sunny Traveler', url: 'https://api.dicebear.com/7.x/big-smile/svg?seed=Leo&backgroundColor=0d9488' },
+  { id: 'big-smile-2', name: 'Beach Lover', url: 'https://api.dicebear.com/7.x/big-smile/svg?seed=Maya&backgroundColor=0f766e' },
+  { id: 'bottts-1', name: 'Tech Nomad', url: 'https://api.dicebear.com/7.x/bottts/svg?seed=WanderBot&backgroundColor=0d9488' },
+  { id: 'bottts-2', name: 'AI Co-Pilot', url: 'https://api.dicebear.com/7.x/bottts/svg?seed=LoopBot&backgroundColor=14b8a6' },
+];
+
 export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'profile' }) {
   const { user, updateProfile, addToWishlist, removeFromWishlist } = useAuth();
   const { dispatch } = useTrip();
@@ -25,6 +40,7 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
   // Profile Form States
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
+  const [selectedAvatar, setSelectedAvatar] = useState(user?.avatar || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [profileSubmitting, setProfileSubmitting] = useState(false);
@@ -43,6 +59,7 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
     if (user) {
       setName(user.name || '');
       setEmail(user.email || '');
+      setSelectedAvatar(user.avatar || '');
       setWishlist(user.wishlist || []);
     }
   }, [user]);
@@ -76,7 +93,7 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
 
     setProfileSubmitting(true);
     try {
-      await updateProfile(name, email, currentPassword, newPassword);
+      await updateProfile(name, email, currentPassword, newPassword, selectedAvatar);
       setProfileSuccess('Profile updated successfully!');
       setCurrentPassword('');
       setNewPassword('');
@@ -195,11 +212,26 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
         {/* TAB 1: Profile & Password */}
         {activeTab === 'profile' && (
           <div className="flex-1 overflow-y-auto pr-1 no-scrollbar space-y-4">
+            {/* User Avatar Card Header */}
+            <div className="flex items-center gap-3.5 p-3.5 rounded-2xl mb-1" style={{ background: 'var(--surface-2, rgba(255,255,255,0.03))', border: '1px solid var(--border, rgba(255,255,255,0.06))' }}>
+              {selectedAvatar || user.avatar ? (
+                <img src={selectedAvatar || user.avatar} alt={user.name} className="w-12 h-12 rounded-full object-cover border-2 border-emerald-400/50 shadow-md transition-transform" />
+              ) : (
+                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-stone-950 font-black text-base shadow-md">
+                  {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                </div>
+              )}
+              <div className="min-w-0">
+                <h3 className="font-extrabold text-sm truncate" style={{ color: 'var(--text)' }}>{user.name}</h3>
+                <p className="text-xs truncate opacity-75" style={{ color: 'var(--muted)' }}>{user.email}</p>
+              </div>
+            </div>
+
             <h2 className="text-lg font-extrabold tracking-tight" style={{ color: 'var(--text)' }}>
               Account Settings
             </h2>
             <p className="text-xs" style={{ color: 'var(--muted)' }}>
-              Update your account username or change your password.
+              Update your account username, select a custom avatar persona, or change your password.
             </p>
 
             {profileSuccess && (
@@ -216,6 +248,35 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
             )}
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">
+              {/* Avatar Persona Selector */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--muted)' }}>
+                  Choose Avatar Persona
+                </label>
+                <div className="grid grid-cols-6 gap-2 p-2 rounded-2xl" style={{ background: 'var(--surface-2, rgba(255,255,255,0.02))', border: '1px solid var(--border, rgba(255,255,255,0.06))' }}>
+                  {PRESET_AVATARS.map((item) => {
+                    const isSelected = selectedAvatar === item.url;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setSelectedAvatar(item.url)}
+                        className={`relative p-1 rounded-xl transition-all cursor-pointer hover:scale-105 active:scale-95 flex items-center justify-center ${
+                          isSelected ? 'ring-2 ring-emerald-400 bg-emerald-500/20' : 'hover:bg-white/5'
+                        }`}
+                        title={item.name}
+                      >
+                        <img src={item.url} alt={item.name} className="w-9 h-9 rounded-full object-cover" />
+                        {isSelected && (
+                          <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 text-stone-950 flex items-center justify-center text-[10px] font-extrabold shadow">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--muted)' }}>
                   Email Address
