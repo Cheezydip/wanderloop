@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import Trip from '../models/Trip.js';
 import { protect } from '../middleware/authMiddleware.js';
 
@@ -64,10 +65,16 @@ router.get('/trips', protect, async (req, res) => {
 // GET /api/trips/:id - Fetch single trip by tripId
 router.get('/trips/:id', protect, async (req, res) => {
   try {
-    const trip = await Trip.findOne({
+    const targetId = req.params.id;
+    const isObjectId = mongoose.Types.ObjectId.isValid(targetId);
+    const query = {
       userId: req.user._id,
-      $or: [{ tripId: req.params.id }, { _id: req.params.id }],
-    });
+      ...(isObjectId
+        ? { $or: [{ tripId: targetId }, { _id: targetId }] }
+        : { tripId: targetId }),
+    };
+
+    const trip = await Trip.findOne(query);
 
     if (!trip) {
       return res.status(404).json({ error: 'Trip not found' });
@@ -83,16 +90,22 @@ router.get('/trips/:id', protect, async (req, res) => {
 // DELETE /api/trips/:id - Delete a saved trip
 router.delete('/trips/:id', protect, async (req, res) => {
   try {
-    const trip = await Trip.findOneAndDelete({
+    const targetId = req.params.id;
+    const isObjectId = mongoose.Types.ObjectId.isValid(targetId);
+    const query = {
       userId: req.user._id,
-      $or: [{ tripId: req.params.id }, { _id: req.params.id }],
-    });
+      ...(isObjectId
+        ? { $or: [{ tripId: targetId }, { _id: targetId }] }
+        : { tripId: targetId }),
+    };
+
+    const trip = await Trip.findOneAndDelete(query);
 
     if (!trip) {
       return res.status(404).json({ error: 'Trip not found or unauthorized' });
     }
 
-    return res.json({ message: 'Trip deleted successfully', tripId: req.params.id });
+    return res.json({ message: 'Trip deleted successfully', tripId: targetId });
   } catch (error) {
     console.error('[DELETE /api/trips/:id error]:', error);
     return res.status(500).json({ error: 'Failed to delete trip' });

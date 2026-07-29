@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTrip } from '../../context/TripContext';
 import { useTheme } from '../../context/ThemeContext';
+import ThemeSlider from '../../components/ThemeSlider';
 
 /* ═══════════════════════════════════════════════════
    QUESTIONNAIRE PAGE
@@ -269,47 +270,7 @@ export default function QuestionnairePage() {
           </button>
 
           {/* Theme Switcher */}
-          <div
-            className="flex items-center gap-[2px] p-[2px] rounded-lg"
-            style={{
-              background: 'var(--surface-2, rgba(255,255,255,0.03))',
-              border: '1px solid var(--border, rgba(255,255,255,0.06))',
-              display: 'flex'
-            }}
-          >
-            <button
-              onClick={() => theme !== 'dark' && setTheme('dark')}
-              className="w-8 h-8 rounded-[6px] grid place-items-center cursor-pointer"
-              style={{
-                background: theme === 'dark' ? 'var(--accent)' : 'transparent',
-                color: theme === 'dark' ? 'var(--bg)' : 'var(--muted)',
-                border: 'none',
-                transition: 'all 0.3s'
-              }}
-              aria-label="Dark theme"
-            >
-              <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
-                <path d="M13.5 9.5a6 6 0 01-7-7 6 6 0 107 7z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-
-            <button
-              onClick={() => theme !== 'sunset' && setTheme('sunset')}
-              className="w-8 h-8 rounded-[6px] grid place-items-center cursor-pointer"
-              style={{
-                background: theme === 'sunset' ? 'var(--accent)' : 'transparent',
-                color: theme === 'sunset' ? 'var(--bg)' : 'var(--muted)',
-                border: 'none',
-                transition: 'all 0.3s'
-              }}
-              aria-label="Sunset theme"
-            >
-              <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
-                <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.3" />
-                <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
+          <ThemeSlider size="small" />
         </div>
       </header>
 

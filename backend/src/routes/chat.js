@@ -30,8 +30,8 @@ The JSON response MUST have exactly this structure:
 
 KEY RULES:
 1. "message": Keep this SHORT (2-4 sentences max). Include 1-2 key transit tips. Do NOT repeat the full stop list (the map shows it).
-2. "isComplete": false while gathering details, true once itinerary is ready.
-3. "trip": null until ready. When ready, provide a complete TripObject.
+2. "isComplete": true IF you are providing a trip itinerary.
+3. "trip": YOU MUST PROVIDE A COMPLETE TripObject IMMEDIATELY if the user specifies a destination or asks for an itinerary. DO NOT wait for more details. Never set to null if a destination is known.
 4. "mapCenter": Always set when generating/updating a trip.
 
 TRIP GENERATION RULES:
@@ -68,7 +68,7 @@ TripObject structure:
       "stops": [
         {
           "id": "s1-1",
-          "name": "<Stop Name>",
+          "name": "<Stop 1 Name>",
           "lat": <accurate latitude>,
           "lng": <accurate longitude>,
           "timeEstimate": "09:00 AM - 11:30 AM",
@@ -82,13 +82,18 @@ TripObject structure:
       "id": "day-2",
       "dayNumber": 2,
       "colorHue": "amber",
-      "stops": []
-    },
-    {
-      "id": "day-3",
-      "dayNumber": 3,
-      "colorHue": "violet",
-      "stops": []
+      "stops": [
+        {
+          "id": "s2-1",
+          "name": "<Stop 1 Name for Day 2>",
+          "lat": <accurate latitude>,
+          "lng": <accurate longitude>,
+          "timeEstimate": "09:30 AM - 12:00 PM",
+          "costEstimate": <number>,
+          "rationale": "<Activities here>. Nearby food: <cafe/restaurant names>.",
+          "order": 1
+        }
+      ]
     }
   ]
 }
@@ -136,9 +141,14 @@ router.post('/chat', async (req, res) => {
     }
 
     let response;
-    let retries = 3;
-    while (retries > 0) {
+    const candidateModels = ['meta/llama-3.1-8b-instruct', 'meta/llama-3.1-70b-instruct'];
+    let lastError;
+
+    for (const modelCandidate of candidateModels) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s max per model
+
         response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
@@ -146,27 +156,28 @@ router.post('/chat', async (req, res) => {
             'Authorization': `Bearer ${apiKey}`
           },
           body: JSON.stringify({
-            model: 'nvidia/llama-3.3-nemotron-super-49b-v1',
+            model: modelCandidate,
             messages: nimMessages,
             response_format: { type: 'json_object' },
             temperature: 0.5,
-            max_tokens: 8000
-          })
+            max_tokens: 3000
+          }),
+          signal: controller.signal
         });
-        if (response.ok) break;
-        if (response.status === 504 || response.status === 502 || response.status === 500) {
-          retries--;
-          if (retries === 0) throw new Error(`NVIDIA NIM returned error: ${response.status}`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } else {
-          const errText = await response.text();
-          throw new Error(`NVIDIA NIM returned error: ${response.status} - ${errText}`);
+
+        clearTimeout(timeoutId);
+        if (response.ok) {
+          console.log(`[server]: LLM response generated successfully using ${modelCandidate}`);
+          break;
         }
       } catch (err) {
-        if (retries === 1) throw err;
-        retries--;
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.warn(`[server]: Model ${modelCandidate} failed or timed out: ${err.message}. Trying next candidate...`);
+        lastError = err;
       }
+    }
+
+    if (!response || !response.ok) {
+      throw new Error(`All LLM models failed or timed out. ${lastError ? lastError.message : ''}`);
     }
 
     const data = await response.json();
@@ -196,6 +207,30 @@ router.post('/chat', async (req, res) => {
           });
         }
       }
+    }
+
+    // Normalize jsonResponse structure so trip object is always present if days/itinerary are returned
+    if (jsonResponse && !jsonResponse.trip) {
+      if (jsonResponse.days && Array.isArray(jsonResponse.days) && jsonResponse.days.length > 0) {
+        jsonResponse.trip = {
+          id: jsonResponse.id || `trip-${(jsonResponse.destination || 'dest').toLowerCase().replace(/\s+/g, '-')}-${jsonResponse.days.length}d`,
+          title: jsonResponse.title || `${jsonResponse.destination || 'Custom'} Trip`,
+          destination: jsonResponse.destination || '',
+          currency: jsonResponse.currency || 'USD',
+          currencySymbol: jsonResponse.currencySymbol || '$',
+          budget: jsonResponse.budget || 2500,
+          budgetItems: jsonResponse.budgetItems || [],
+          days: jsonResponse.days
+        };
+      } else if (jsonResponse.itinerary && Array.isArray(jsonResponse.itinerary.days)) {
+        jsonResponse.trip = jsonResponse.itinerary;
+      } else if (jsonResponse.tripObject && Array.isArray(jsonResponse.tripObject.days)) {
+        jsonResponse.trip = jsonResponse.tripObject;
+      }
+    }
+
+    if (jsonResponse && !jsonResponse.message && jsonResponse.trip) {
+      jsonResponse.message = `I've planned a custom ${jsonResponse.trip.title || jsonResponse.trip.destination || 'travel'} itinerary for you! Check out the stops and route on the map below.`;
     }
 
     // Strip all asterisks/stars from message response for security and strict formatting compliance
@@ -240,10 +275,31 @@ router.post('/chat', async (req, res) => {
       }
     }
 
+    let fallbackCenterLat = 35.6895; // Default Tokyo
+    let fallbackCenterLng = 139.6917;
+
+    if (jsonResponse.mapCenter) {
+      fallbackCenterLat = jsonResponse.mapCenter.lat;
+      fallbackCenterLng = jsonResponse.mapCenter.lng;
+    } else if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
+      let foundCenter = false;
+      for (const day of jsonResponse.trip.days) {
+        if (Array.isArray(day.stops)) {
+          const validStop = day.stops.find(s => typeof s.lat === 'number' && !isNaN(s.lat) && typeof s.lng === 'number' && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0);
+          if (validStop) {
+            fallbackCenterLat = validStop.lat;
+            fallbackCenterLng = validStop.lng;
+            foundCenter = true;
+            break;
+          }
+        }
+      }
+    }
+
     // Geocode stops securely within a bounding box centered on mapCenter to ensure real targets
-    if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days) && jsonResponse.mapCenter) {
-      const centerLat = jsonResponse.mapCenter.lat;
-      const centerLng = jsonResponse.mapCenter.lng;
+    if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
+      const centerLat = fallbackCenterLat;
+      const centerLng = fallbackCenterLng;
       const viewbox = `${centerLng - 0.5},${centerLat + 0.5},${centerLng + 0.5},${centerLat - 0.5}`;
 
       // Get city name for fallback search
@@ -307,20 +363,26 @@ router.post('/chat', async (req, res) => {
 
             // Attempt 1: Search using clean query bounded by viewbox
             let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery)}&format=geojson&limit=1&viewbox=${viewbox}&bounded=1`;
-            coords = await fetchCoords(url);
+            coords = await fetchCoords(url, cleanQuery);
 
             // Attempt 2: If clean query fails, try clean query + cityName bounded by viewbox
             if (!coords && cityName) {
               const queryWithCity = `${cleanQuery}, ${cityName}`;
               url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryWithCity)}&format=geojson&limit=1&viewbox=${viewbox}&bounded=1`;
-              coords = await fetchCoords(url);
+              coords = await fetchCoords(url, queryWithCity);
             }
 
-            // Attempt 3: Unbounded search in Japan if bounded search failed (useful when itinerary moves across cities, e.g. Kyoto -> Shinjuku)
+            // Attempt 3: Unbounded search with cleanQuery + cityName
+            if (!coords && cityName) {
+              const queryWithCity = `${cleanQuery}, ${cityName}`;
+              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryWithCity)}&format=geojson&limit=1`;
+              coords = await fetchCoords(url, queryWithCity);
+            }
+
+            // Attempt 4: Unbounded search for cleanQuery
             if (!coords) {
-              const queryJapan = `${cleanQuery}, Japan`;
-              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryJapan)}&format=geojson&limit=1`;
-              coords = await fetchCoords(url);
+              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery)}&format=geojson&limit=1`;
+              coords = await fetchCoords(url, cleanQuery);
             }
 
             if (coords) {
@@ -329,22 +391,26 @@ router.post('/chat', async (req, res) => {
               chatGeocodeCache.set(cacheKey, { lng: coords.lng, lat: coords.lat });
             }
 
-            await new Promise(resolve => setTimeout(resolve, 150)); // Fast rate limit pause
+            await new Promise(resolve => setTimeout(resolve, 100)); // Fast rate limit pause
           } catch (err) {
             console.error('Failed to geocode stop:', stop.name, err);
           }
 
-          // SANITIZATION: Ensure stop coordinates are valid numbers, fallback if geocoding failed
-          if (typeof stop.lat !== 'number' || isNaN(stop.lat) || typeof stop.lng !== 'number' || isNaN(stop.lng)) {
-            const fallback = lookupKnownLandmark(stop.name) || { lat: centerLat, lng: centerLng };
+          // SANITIZATION: Ensure stop coordinates are valid numbers, fallback to map center if geocoding failed
+          if (
+            typeof stop.lat !== 'number' ||
+            isNaN(stop.lat) ||
+            typeof stop.lng !== 'number' ||
+            isNaN(stop.lng) ||
+            stop.lat < -90 ||
+            stop.lat > 90 ||
+            stop.lng < -180 ||
+            stop.lng > 180
+          ) {
+            const fallback = lookupKnownLandmark(stop.name, centerLat, centerLng) || { lat: centerLat, lng: centerLng };
             stop.lat = fallback.lat;
             stop.lng = fallback.lng;
-            console.log(`[server]: Fallback missing coordinates for "${stop.name}" -> reset to [${stop.lat}, ${stop.lng}]`);
-          } else if (stop.lat < 35.0 && stop.lng > 139.0) {
-            const fallback = lookupKnownLandmark(stop.name) || { lat: 35.6895, lng: 139.6917 }; // Default Shinjuku / Tokyo
-            stop.lat = fallback.lat;
-            stop.lng = fallback.lng;
-            console.log(`[server]: Sanitized ocean coordinates for "${stop.name}" -> reset to [${stop.lat}, ${stop.lng}]`);
+            console.log(`[server]: Fallback missing/invalid coordinates for "${stop.name}" -> reset to [${stop.lat}, ${stop.lng}]`);
           }
         }
       }
@@ -356,8 +422,8 @@ router.post('/chat', async (req, res) => {
         if (!Array.isArray(day.stops)) return;
         const seenCoords = new Set();
         day.stops.forEach((stop, idx) => {
-          if (typeof stop.lat !== 'number' || isNaN(stop.lat)) stop.lat = centerLat;
-          if (typeof stop.lng !== 'number' || isNaN(stop.lng)) stop.lng = centerLng;
+          if (typeof stop.lat !== 'number' || isNaN(stop.lat)) stop.lat = fallbackCenterLat;
+          if (typeof stop.lng !== 'number' || isNaN(stop.lng)) stop.lng = fallbackCenterLng;
 
           const key = `${stop.lat.toFixed(4)}_${stop.lng.toFixed(4)}`;
           if (seenCoords.has(key)) {
@@ -380,9 +446,9 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    // POST-PROCESSING: Remove outlier stops & reorder stops by geographic nearest-neighbor feasibility
+    // POST-PROCESSING: Remove extreme outlier stops & reorder stops by geographic nearest-neighbor feasibility
     if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
-      const MAX_DISTANCE_KM = 20; // Max allowed distance from day centroid (tightened for feasibility)
+      const MAX_DISTANCE_KM = 300; // Allow wide regional / multi-city stops (e.g. up to 300km)
 
       for (const day of jsonResponse.trip.days) {
         if (!Array.isArray(day.stops) || day.stops.length < 2) continue;
@@ -456,11 +522,11 @@ router.post('/chat', async (req, res) => {
   }
 });
 
-// Helper to fetch coordinates from Nominatim safely with a timeout
-async function fetchCoords(url) {
+// Helper to fetch coordinates from Nominatim or Photon safely with a timeout
+async function fetchCoords(url, fallbackQuery = null) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(url, {
       headers: {
         'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
@@ -476,30 +542,48 @@ async function fetchCoords(url) {
       }
     }
   } catch (err) {
-    console.error('fetchCoords failed for URL:', url, err.message);
+    console.warn('[server]: Nominatim fetchCoords failed:', err.message);
   }
+
+  // Fallback to Photon API if Nominatim query fails
+  if (fallbackQuery) {
+    try {
+      const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(fallbackQuery)}&limit=1`;
+      const pRes = await fetch(photonUrl);
+      if (pRes.ok) {
+        const pData = await pRes.json();
+        if (pData.features && pData.features.length > 0) {
+          const coords = pData.features[0].geometry.coordinates;
+          return { lng: coords[0], lat: coords[1] };
+        }
+      }
+    } catch (pErr) {
+      console.warn('[server]: Photon fetchCoords fallback failed:', pErr.message);
+    }
+  }
+
   return null;
 }
 
 // Known landmark dictionary for rapid, reliable coordinate matching
-// Known landmark dictionary for rapid, reliable coordinate matching
-function lookupKnownLandmark(queryStr) {
+function lookupKnownLandmark(queryStr, centerLat = null, centerLng = null) {
   if (!queryStr) return null;
   const q = queryStr.toLowerCase();
+  let match = null;
 
   // ─── Shinjuku Landmarks ───
-  if (q.includes('shinjuku gyoen') || q.includes('gyoen')) return { lat: 35.6852, lng: 139.7101 };
-  if (q.includes('golden gai')) return { lat: 35.6942, lng: 139.7046 };
-  if (q.includes('omoide yokocho') || q.includes('memory lane')) return { lat: 35.6928, lng: 139.6994 };
-  if (q.includes('kabukicho') || q.includes('kabuki-cho') || q.includes('kabuki')) return { lat: 35.6938, lng: 139.7034 };
-  if (q.includes('metropolitan government') || q.includes('tocho') || q.includes('observation deck')) return { lat: 35.6896, lng: 139.6917 };
-  if (q.includes('godzilla') || q.includes('gracery')) return { lat: 35.6953, lng: 139.7020 };
-  if (q.includes('hanazono') || q.includes('hanazono-jinja')) return { lat: 35.6931, lng: 139.7061 };
-  if (q.includes('shinjuku central park') || q.includes('shinjuku park')) return { lat: 35.6898, lng: 139.6878 };
-  if (q.includes('samurai museum') || q.includes('samurai')) return { lat: 35.6955, lng: 139.7029 };
-  if (q.includes('shin-okubo') || q.includes('korea town')) return { lat: 35.7013, lng: 139.7000 };
-  if (q.includes('takashimaya') || q.includes('times square')) return { lat: 35.6872, lng: 139.7018 };
-  if (q.includes('shinjuku station') || q.includes('shinjuku')) return { lat: 35.6895, lng: 139.6917 };
+  if (q.includes('shinjuku gyoen') || q.includes('gyoen')) match = { lat: 35.6852, lng: 139.7101 };
+  else if (q.includes('golden gai')) match = { lat: 35.6942, lng: 139.7046 };
+  else if (q.includes('omoide yokocho') || q.includes('memory lane')) match = { lat: 35.6928, lng: 139.6994 };
+  else if (q.includes('kabukicho') || q.includes('kabuki-cho')) match = { lat: 35.6938, lng: 139.7034 };
+  else if (q.includes('tocho') || q.includes('tokyo metropolitan government')) match = { lat: 35.6896, lng: 139.6917 };
+  else if (q.includes('godzilla head') || q.includes('hotel gracery shinjuku')) match = { lat: 35.6953, lng: 139.7020 };
+  else if (q.includes('hanazono-jinja')) match = { lat: 35.6931, lng: 139.7061 };
+  else if (q.includes('shinjuku central park')) match = { lat: 35.6898, lng: 139.6878 };
+  else if (q.includes('samurai museum')) match = { lat: 35.6955, lng: 139.7029 };
+  else if (q.includes('shin-okubo korea town')) match = { lat: 35.7013, lng: 139.7000 };
+  else if (q.includes('shinjuku takashimaya times square')) match = { lat: 35.6872, lng: 139.7018 };
+  else if (q.includes('shinjuku station')) match = { lat: 35.6895, lng: 139.6917 };
 
   // ─── Shibuya & Harajuku Landmarks ───
   if (q.includes('shibuya crossing') || q.includes('hachiko') || q.includes('shibuya sky') || q.includes('shibuya')) return { lat: 35.6596, lng: 139.7006 };
@@ -537,9 +621,15 @@ function lookupKnownLandmark(queryStr) {
   if (q.includes('osaka castle') || q.includes('osakajo')) return { lat: 34.6873, lng: 135.5262 };
   if (q.includes('shinsekai') || q.includes('tsutenkaku')) return { lat: 34.6525, lng: 135.5063 };
   if (q.includes('fuji') || q.includes('kawaguchiko')) return { lat: 35.4983, lng: 138.7686 };
-  if (q.includes('hakone') || q.includes('lake ashi')) return { lat: 35.2323, lng: 139.1069 };
+  if (match && typeof centerLat === 'number' && typeof centerLng === 'number') {
+    const dist = haversineKm(centerLat, centerLng, match.lat, match.lng);
+    if (dist > 250) {
+      console.log(`[server]: Rejecting landmark match for "${queryStr}" (${dist.toFixed(1)}km from trip center)`);
+      return null;
+    }
+  }
 
-  return null;
+  return match;
 }
 
 // Clean query strings to improve OSM geocoding hits

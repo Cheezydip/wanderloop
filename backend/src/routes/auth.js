@@ -1,9 +1,11 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import User from '../models/User.js';
 import { protect, JWT_SECRET } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
+const googleClient = new OAuth2Client();
 
 function generateTokenAndSetCookie(res, userId) {
   const token = jwt.sign({ id: userId }, JWT_SECRET, {
@@ -19,6 +21,98 @@ function generateTokenAndSetCookie(res, userId) {
 
   return token;
 }
+
+// POST /api/auth/google - Authenticate using Google ID Token or Access Token
+router.post('/auth/google', async (req, res) => {
+  try {
+    const { credential, accessToken } = req.body;
+
+    if (!credential && !accessToken) {
+      return res.status(400).json({ error: 'Missing Google authorization token' });
+    }
+
+    if (!User.db || User.db.readyState !== 1) {
+      return res.status(503).json({
+        error: 'Database connection failed. Please check MONGODB_URI in .env.',
+      });
+    }
+
+    let googleId, email, name, picture;
+
+    if (credential) {
+      const googleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+      const verifyOptions = { idToken: credential };
+      if (googleClientId) {
+        verifyOptions.audience = googleClientId;
+      }
+
+      const ticket = await googleClient.verifyIdToken(verifyOptions);
+      const payload = ticket.getPayload();
+
+      googleId = payload.sub;
+      email = payload.email;
+      name = payload.name || payload.given_name || 'Traveler';
+      picture = payload.picture;
+    } else if (accessToken) {
+      const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!userinfoRes.ok) {
+        return res.status(400).json({ error: 'Failed to fetch user profile from Google' });
+      }
+      const payload = await userinfoRes.json();
+      googleId = payload.sub;
+      email = payload.email;
+      name = payload.name || 'Traveler';
+      picture = payload.picture;
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: 'Google account did not return a valid email address' });
+    }
+
+    const lowercaseEmail = email.toLowerCase().trim();
+
+    // Find existing user by googleId or email
+    let user = await User.findOne({ googleId });
+
+    if (!user) {
+      user = await User.findOne({ email: lowercaseEmail });
+      if (user) {
+        user.googleId = googleId;
+        if (picture && !user.avatar) {
+          user.avatar = picture;
+        }
+        await user.save();
+      }
+    }
+
+    if (!user) {
+      user = await User.create({
+        name: name.trim(),
+        email: lowercaseEmail,
+        googleId,
+        avatar: picture || '',
+      });
+    } else if (picture && user.avatar !== picture) {
+      user.avatar = picture;
+      await user.save();
+    }
+
+    generateTokenAndSetCookie(res, user._id);
+
+    return res.json({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar || '',
+      wishlist: user.wishlist || [],
+    });
+  } catch (error) {
+    console.error('[auth/google error]:', error);
+    return res.status(400).json({ error: error.message || 'Google authentication failed' });
+  }
+});
 
 // POST /api/auth/signup
 router.post('/auth/signup', async (req, res) => {
@@ -57,6 +151,8 @@ router.post('/auth/signup', async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
+      avatar: user.avatar || '',
+      wishlist: user.wishlist || [],
     });
   } catch (error) {
     console.error('[auth/signup error]:', error);
@@ -85,6 +181,12 @@ router.post('/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    if (!user.password) {
+      return res.status(400).json({
+        error: 'This account was created using Google Sign-In. Please click "Continue with Google" to log in.',
+      });
+    }
+
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -96,6 +198,8 @@ router.post('/auth/login', async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
+      avatar: user.avatar || '',
+      wishlist: user.wishlist || [],
     });
   } catch (error) {
     console.error('[auth/login error]:', error);
@@ -118,6 +222,7 @@ router.get('/auth/me', protect, (req, res) => {
     id: req.user._id,
     name: req.user.name,
     email: req.user.email,
+    avatar: req.user.avatar || '',
     wishlist: req.user.wishlist || [],
   });
 });
@@ -167,6 +272,7 @@ router.put('/auth/profile', protect, async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
+      avatar: user.avatar || '',
       wishlist: user.wishlist || [],
       message: 'Profile updated successfully!',
     });
@@ -179,6 +285,9 @@ router.put('/auth/profile', protect, async (req, res) => {
 // GET /api/auth/wishlist
 router.get('/auth/wishlist', protect, async (req, res) => {
   try {
+    if (!User.db || User.db.readyState !== 1) {
+      return res.status(503).json({ error: 'Database connection failed' });
+    }
     const user = await User.findById(req.user._id);
     return res.json(user?.wishlist || []);
   } catch (error) {
@@ -190,26 +299,41 @@ router.get('/auth/wishlist', protect, async (req, res) => {
 router.post('/auth/wishlist', protect, async (req, res) => {
   try {
     const { name, category, country, notes } = req.body;
-    if (!name) {
+    if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Destination name is required' });
+    }
+
+    if (!User.db || User.db.readyState !== 1) {
+      return res.status(503).json({ error: 'Database connection failed' });
     }
 
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const newItem = {
-      id: `w-${Date.now()}`,
-      name: name.trim(),
-      category: category || 'General',
-      country: country || '',
-      notes: notes || '',
-      addedAt: new Date(),
-    };
-
     user.wishlist = user.wishlist || [];
-    user.wishlist.unshift(newItem);
-    await user.save();
 
+    const existingIndex = user.wishlist.findIndex(
+      (item) => item.name.toLowerCase().trim() === name.toLowerCase().trim()
+    );
+
+    if (existingIndex !== -1) {
+      // Update existing item notes/country
+      if (country) user.wishlist[existingIndex].country = country;
+      if (notes) user.wishlist[existingIndex].notes = notes;
+      if (category) user.wishlist[existingIndex].category = category;
+    } else {
+      const newItem = {
+        id: `w-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        name: name.trim(),
+        category: category || 'General',
+        country: country || '',
+        notes: notes || '',
+        addedAt: new Date(),
+      };
+      user.wishlist.unshift(newItem);
+    }
+
+    await user.save();
     return res.status(201).json(user.wishlist);
   } catch (error) {
     console.error('[POST /api/auth/wishlist error]:', error);
@@ -220,12 +344,29 @@ router.post('/auth/wishlist', protect, async (req, res) => {
 // DELETE /api/auth/wishlist/:id - Remove item from wishlist
 router.delete('/auth/wishlist/:id', protect, async (req, res) => {
   try {
+    if (!User.db || User.db.readyState !== 1) {
+      return res.status(503).json({ error: 'Database connection failed' });
+    }
+
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    user.wishlist = (user.wishlist || []).filter((item) => item.id !== req.params.id);
-    await user.save();
+    const target = decodeURIComponent(req.params.id).trim().toLowerCase();
 
+    user.wishlist = (user.wishlist || []).filter((item) => {
+      if (!item) return false;
+      const itemId = item.id ? String(item.id).trim().toLowerCase() : '';
+      const itemMongoId = item._id ? String(item._id).trim().toLowerCase() : '';
+      const itemName = item.name ? String(item.name).trim().toLowerCase() : '';
+
+      if (itemId && itemId === target) return false;
+      if (itemMongoId && itemMongoId === target) return false;
+      if (itemName && itemName === target) return false;
+
+      return true;
+    });
+
+    await user.save();
     return res.json(user.wishlist);
   } catch (error) {
     console.error('[DELETE /api/auth/wishlist/:id error]:', error);

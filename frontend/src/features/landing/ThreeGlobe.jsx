@@ -132,6 +132,38 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
     const globeWire = new THREE.LineSegments(wireGeo, wireMat);
     scene.add(globeWire);
 
+    /* ─── Atmosphere Glow Shader ─── */
+    const atmosphereVertexShader = `
+      varying vec3 vNormal;
+      void main() {
+        vNormal = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+    const atmosphereFragmentShader = `
+      varying vec3 vNormal;
+      uniform vec3 color;
+      void main() {
+        float intensity = pow(0.65 - dot(vNormal, vec3(0, 0, 1.0)), 4.0);
+        gl_FragColor = vec4(color, 1.0) * intensity;
+      }
+    `;
+    const atmosphereMat = new THREE.ShaderMaterial({
+      vertexShader: atmosphereVertexShader,
+      fragmentShader: atmosphereFragmentShader,
+      uniforms: {
+        color: { value: new THREE.Color(colors.wireframe) }
+      },
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0 // Will fade in
+    });
+    // Atmosphere is slightly larger than the wireframe
+    const atmosphere = new THREE.Mesh(sphereGeo, atmosphereMat);
+    atmosphere.scale.set(1.25, 1.25, 1.25);
+    scene.add(atmosphere);
+
     /* ─── Latitude/Longitude Rings ─── */
     const ringCount = 5;
     const rings = [];
@@ -252,6 +284,40 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
       landingPinGroup.add(rMesh);
     });
     scene.add(landingPinGroup);
+
+    /* ─── Flight Paths (Arcs) ─── */
+    const arcGroup = new THREE.Group();
+    const createArc = (start, end) => {
+      const startVec = latLngToVec3(start.lat, start.lng, baseRadius);
+      const endVec = latLngToVec3(end.lat, end.lng, baseRadius);
+      
+      // Calculate mid-point and elevate it based on distance
+      const midPoint = new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5);
+      const distance = startVec.distanceTo(endVec);
+      midPoint.normalize().multiplyScalar(baseRadius + distance * 0.25);
+      
+      const curve = new THREE.QuadraticBezierCurve3(startVec, midPoint, endVec);
+      
+      const tubeGeo = new THREE.TubeGeometry(curve, 32, 0.004, 8, false);
+      const tubeMat = new THREE.MeshBasicMaterial({
+        color: colors.pin,
+        transparent: true,
+        opacity: 0, // Starts hidden, fades in with zoom
+      });
+      const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+      tubeMesh.userData.baseOpacity = 0.4;
+      arcGroup.add(tubeMesh);
+    };
+
+    // Connect some cities
+    createArc(pinPositions[0], pinPositions[2]); // Paris - NYC
+    createArc(pinPositions[2], pinPositions[6]); // NYC - London
+    createArc(pinPositions[6], pinPositions[4]); // London - Delhi
+    createArc(pinPositions[4], pinPositions[5]); // Delhi - Singapore
+    createArc(pinPositions[5], pinPositions[1]); // Singapore - Sydney
+    createArc(pinPositions[3], pinPositions[0]); // Rio - Paris
+
+    scene.add(arcGroup);
 
     /* ─── Ambient Particle Field ─── */
     const particleCount = 200;
@@ -377,7 +443,7 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
         // Fade in particles
         particleMat.opacity = THREE.MathUtils.lerp(0, colors.particleOpacity, easedZoom);
 
-        // Fade in other landing page pins
+        // Fade in other landing page pins and arcs and atmosphere
         landingPinGroup.children.forEach((child) => {
           if (child.userData.baseOpacity !== undefined) {
             child.material.opacity = THREE.MathUtils.lerp(0, child.userData.baseOpacity, easedZoom);
@@ -385,6 +451,10 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
             child.material.opacity = THREE.MathUtils.lerp(0, 0.9, easedZoom);
           }
         });
+        arcGroup.children.forEach((child) => {
+          child.material.opacity = THREE.MathUtils.lerp(0, child.userData.baseOpacity, easedZoom);
+        });
+        atmosphereMat.opacity = THREE.MathUtils.lerp(0, 0.4, easedZoom);
 
         // Slowly fade out the heavy loading pin drop visual once zoomed out
         const loadingPinOpacity = THREE.MathUtils.lerp(1.0, 0, easedZoom);
@@ -407,6 +477,10 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
             child.material.opacity = 0.9;
           }
         });
+        arcGroup.children.forEach((child) => {
+          child.material.opacity = child.userData.baseOpacity + Math.sin(elapsed * 2.0 + child.position.y) * 0.1;
+        });
+        atmosphereMat.opacity = 0.4 + Math.sin(elapsed * 1.5) * 0.05;
         loadingPinGroup.visible = false;
         rippleMesh.visible = false;
       }
@@ -420,9 +494,11 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
         globeInner.rotation.y = globeWire.rotation.y;
         globeInner.rotation.x = globeWire.rotation.x;
 
-        // Orbiting pins group syncs with globe
+        // Orbiting pins and arcs sync with globe
         landingPinGroup.rotation.y = globeWire.rotation.y;
         landingPinGroup.rotation.x = globeWire.rotation.x;
+        arcGroup.rotation.y = globeWire.rotation.y;
+        arcGroup.rotation.x = globeWire.rotation.x;
 
         // If loading, let the dropping pin rotate with the globe
         if (loadingRef.current) {
@@ -467,8 +543,13 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
       rippleMat.dispose();
       particleGeo.dispose();
       particleMat.dispose();
+      atmosphereMat.dispose();
       
       landingPinGroup.children.forEach(c => {
+        c.geometry.dispose();
+        c.material.dispose();
+      });
+      arcGroup.children.forEach(c => {
         c.geometry.dispose();
         c.material.dispose();
       });

@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'profile' }) {
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, addToWishlist, removeFromWishlist } = useAuth();
   const { dispatch } = useTrip();
 
   const [activeTab, setActiveTab] = useState(initialTab); // 'profile' | 'wishlist'
@@ -95,17 +95,11 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
     setWishlistLoading(true);
     setWishlistError(null);
     try {
-      const res = await fetch('/api/auth/wishlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: destName,
-          country: destCountry,
-          notes: destNotes,
-        }),
+      const updated = await addToWishlist({
+        name: destName,
+        country: destCountry,
+        notes: destNotes,
       });
-      if (!res.ok) throw new Error('Failed to add destination');
-      const updated = await res.json();
       setWishlist(updated);
       setDestName('');
       setDestCountry('');
@@ -120,11 +114,7 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
   // Remove Item from Wishlist
   const handleRemoveWishlist = async (id) => {
     try {
-      const res = await fetch(`/api/auth/wishlist/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to remove item');
-      const updated = await res.json();
+      const updated = await removeFromWishlist(id);
       setWishlist(updated);
     } catch (err) {
       alert(err.message);
@@ -474,7 +464,7 @@ export default function AccountSettingsModal({ isOpen, onClose, initialTab = 'pr
                         <span>Plan Trip</span>
                       </button>
                       <button
-                        onClick={() => handleRemoveWishlist(item.id)}
+                        onClick={() => handleRemoveWishlist(item.id || item._id || item.name)}
                         className="p-1.5 rounded-lg transition-colors cursor-pointer hover:text-rose-400 hover:bg-rose-500/10"
                         style={{ color: 'var(--muted)' }}
                         title="Remove from wishlist"

@@ -2,6 +2,25 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 
 const AuthContext = createContext();
 
+async function safeFetchJson(url, options = {}) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (err) {
+    if (!res.ok) {
+      throw new Error(`Server connection error (${res.status}). Please check backend status.`);
+    }
+  }
+
+  if (!res.ok) {
+    throw new Error(data.error || `Server request failed (${res.status})`);
+  }
+
+  return data;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -11,15 +30,10 @@ export function AuthProvider({ children }) {
   // Check if user has an active session cookie on startup
   const checkAuthStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/auth/me', {
+      const data = await safeFetchJson('/api/auth/me', {
         headers: { 'Content-Type': 'application/json' },
       });
-      if (res.ok) {
-        const userData = await res.json();
-        setUser(userData);
-      } else {
-        setUser(null);
-      }
+      setUser(data);
     } catch (err) {
       console.warn('[AuthContext]: Failed to check auth status:', err.message);
       setUser(null);
@@ -35,15 +49,11 @@ export function AuthProvider({ children }) {
   const signup = async (name, email, password) => {
     setError(null);
     try {
-      const res = await fetch('/api/auth/signup', {
+      const data = await safeFetchJson('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Signup failed');
-      }
       setUser(data);
       setAuthModalOpen(null);
       return data;
@@ -56,15 +66,29 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     setError(null);
     try {
-      const res = await fetch('/api/auth/login', {
+      const data = await safeFetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Login failed');
-      }
+      setUser(data);
+      setAuthModalOpen(null);
+      return data;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  };
+
+  const loginWithGoogle = async (authPayload) => {
+    setError(null);
+    try {
+      const body = typeof authPayload === 'string' ? { credential: authPayload } : authPayload;
+      const data = await safeFetchJson('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
       setUser(data);
       setAuthModalOpen(null);
       return data;
@@ -77,15 +101,11 @@ export function AuthProvider({ children }) {
   const updateProfile = async (name, email, currentPassword, newPassword) => {
     setError(null);
     try {
-      const res = await fetch('/api/auth/profile', {
+      const data = await safeFetchJson('/api/auth/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, currentPassword, newPassword }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to update profile');
-      }
       setUser(data);
       return data;
     } catch (err) {
@@ -114,6 +134,59 @@ export function AuthProvider({ children }) {
     setAuthModalOpen(null);
   };
 
+  const updateWishlist = (newWishlist) => {
+    setUser((prev) => (prev ? { ...prev, wishlist: newWishlist } : null));
+  };
+
+  const addToWishlist = async ({ name, country = '', notes = '', category = 'General' }) => {
+    if (!user) {
+      openAuthModal('login');
+      throw new Error('Please log in to save items to your wishlist.');
+    }
+    try {
+      const res = await fetch('/api/auth/wishlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, country, notes, category }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to add item to wishlist');
+      }
+      updateWishlist(data);
+      return data;
+    } catch (err) {
+      console.error('[addToWishlist error]:', err);
+      throw err;
+    }
+  };
+
+  const removeFromWishlist = async (idOrName) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/auth/wishlist/${encodeURIComponent(idOrName)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to remove item from wishlist');
+      }
+      updateWishlist(data);
+      return data;
+    } catch (err) {
+      console.error('[removeFromWishlist error]:', err);
+      throw err;
+    }
+  };
+
+  const isInWishlist = (name) => {
+    if (!user || !user.wishlist || !name) return false;
+    const searchName = name.toLowerCase().trim();
+    return user.wishlist.some(
+      (item) => item.name && item.name.toLowerCase().trim() === searchName
+    );
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -123,8 +196,13 @@ export function AuthProvider({ children }) {
         error,
         signup,
         login,
+        loginWithGoogle,
         logout,
         updateProfile,
+        updateWishlist,
+        addToWishlist,
+        removeFromWishlist,
+        isInWishlist,
         openAuthModal,
         closeAuthModal,
         checkAuthStatus,

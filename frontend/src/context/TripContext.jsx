@@ -211,6 +211,16 @@ function tripReducer(state, action) {
         budgetItems: newItems,
         hasTrip: true,
         isInterviewMode: false,
+        homestays: [], // Clear lodgings from previous itinerary so fresh location-specific lodgings fetch
+        selectedHomestaysByDay: {},
+        selectedHomestayId: null,
+        hoveredHomestayId: null,
+        activeHomestayOnMapId: null,
+        nearbyPOIs: [],
+        activeStopId: null,
+        hoveredStopId: null,
+        highlightedDayId: null,
+        routesData: {},
         mapCenter: null
       };
     }
@@ -534,8 +544,17 @@ function tripReducer(state, action) {
         hasTrip: true,
         isGenerating: false,
         isInterviewMode: false,
+        homestays: [],
+        selectedHomestaysByDay: {},
+        selectedHomestayId: null,
+        hoveredHomestayId: null,
+        activeHomestayOnMapId: null,
+        nearbyPOIs: [],
+        activeStopId: null,
+        hoveredStopId: null,
+        highlightedDayId: null,
         routesData: {},
-        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId),
+        budgetItems: syncBudgetItems(selectedTrip, [], {}, null),
       };
     }
 
@@ -568,8 +587,16 @@ function tripReducer(state, action) {
         hasTrip: true,
         isGenerating: false,
         isInterviewMode: false,
+        homestays: [],
+        selectedHomestaysByDay: {},
+        selectedHomestayId: null,
+        hoveredHomestayId: null,
+        activeHomestayOnMapId: null,
+        nearbyPOIs: [],
+        activeStopId: null,
+        hoveredStopId: null,
+        highlightedDayId: null,
         routesData: {},
-        budgetItems: syncBudgetItems(selectedTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId)
       };
     }
       

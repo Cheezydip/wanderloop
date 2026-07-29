@@ -12,7 +12,7 @@ import {
   Settings,
 } from 'lucide-react';
 
-export default function UserProfileDropdown({ onOpenSavedTrips }) {
+export default function UserProfileDropdown({ onOpenSavedTrips, onOpenNewTripModal }) {
   const { user, logout } = useAuth();
   const { dispatch } = useTrip();
   const [isOpen, setIsOpen] = useState(false);
@@ -76,9 +76,13 @@ export default function UserProfileDropdown({ onOpenSavedTrips }) {
           aria-haspopup="true"
           aria-expanded={isOpen}
         >
-          <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-extrabold text-[10px]">
-            {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
-          </div>
+          {user.avatar ? (
+            <img src={user.avatar} alt={user.name} className="w-5 h-5 rounded-full object-cover border border-emerald-500/40" />
+          ) : (
+            <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-extrabold text-[10px]">
+              {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+            </div>
+          )}
           <span className="max-w-[110px] truncate">{user.name}</span>
           <ChevronDown
             className={`w-3.5 h-3.5 text-stone-400 transition-transform duration-200 ${
@@ -102,9 +106,13 @@ export default function UserProfileDropdown({ onOpenSavedTrips }) {
             {/* User Header Section */}
             <div className="p-3 rounded-xl mb-1.5" style={{ background: 'var(--surface-2, rgba(255,255,255,0.03))' }}>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-stone-950 font-black text-sm shadow-md">
-                  {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
-                </div>
+                {user.avatar ? (
+                  <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full object-cover border border-emerald-500/40 shadow-md" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-stone-950 font-black text-sm shadow-md">
+                    {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                  </div>
+                )}
                 <div className="min-w-0 flex-1">
                   <h4 className="font-extrabold text-sm truncate" style={{ color: 'var(--text)' }}>
                     {user.name}
@@ -180,7 +188,9 @@ export default function UserProfileDropdown({ onOpenSavedTrips }) {
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  if (window.confirm('Are you sure you want to start a new trip?')) {
+                  if (onOpenNewTripModal) {
+                    onOpenNewTripModal();
+                  } else {
                     dispatch({ type: 'START_NEW_TRIP' });
                   }
                 }}

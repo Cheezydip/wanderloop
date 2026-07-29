@@ -6,6 +6,8 @@ import { getCurrencySymbol } from '../utils/currency';
 import ExportModal from './ExportModal';
 import SavedTripsModal from './SavedTripsModal';
 import UserProfileDropdown from './UserProfileDropdown';
+import ThemeSlider from './ThemeSlider';
+import NewTripConfirmModal from './NewTripConfirmModal';
 import { AlertTriangle, Cloud, User, LogOut, LogIn, UserPlus } from 'lucide-react';
 
 export default function TopBar() {
@@ -18,6 +20,7 @@ export default function TopBar() {
   const [saveText, setSaveText] = useState('Save');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isSavedTripsOpen, setIsSavedTripsOpen] = useState(false);
+  const [isNewTripModalOpen, setIsNewTripModalOpen] = useState(false);
   const budgetRef = useRef(null);
 
   useEffect(() => {
@@ -106,7 +109,7 @@ export default function TopBar() {
           className="flex items-center gap-[7px] no-underline"
           onClick={(e) => {
             e.preventDefault();
-            if (state.hasTrip) dispatch({ type: 'START_NEW_TRIP' });
+            if (state.hasTrip) setIsNewTripModalOpen(true);
           }}
           style={{ textDecoration: 'none' }}
         >
@@ -348,11 +351,7 @@ export default function TopBar() {
 
             {/* New Trip / Exit Button */}
             <button
-              onClick={() => {
-                if (window.confirm('Are you sure you want to exit this itinerary and start a new trip?')) {
-                  dispatch({ type: 'START_NEW_TRIP' });
-                }
-              }}
+              onClick={() => setIsNewTripModalOpen(true)}
               className="flex items-center gap-1.5 px-3 py-[6px] rounded-lg text-xs font-semibold cursor-pointer border transition-all-300 hover:bg-rose-500/15 hover:border-rose-500/40 hover:text-rose-400"
               style={{
                 background: 'var(--surface-2, rgba(255,255,255,0.03))',
@@ -387,7 +386,10 @@ export default function TopBar() {
             </button>
 
             {/* Rich Interactive User Profile Dropdown Menu */}
-            <UserProfileDropdown onOpenSavedTrips={() => setIsSavedTripsOpen(true)} />
+            <UserProfileDropdown
+              onOpenSavedTrips={() => setIsSavedTripsOpen(true)}
+              onOpenNewTripModal={() => setIsNewTripModalOpen(true)}
+            />
           </div>
         ) : (
           <div className="flex items-center gap-1.5 pl-1 border-l" style={{ borderColor: 'var(--border, rgba(255,255,255,0.06))' }}>
@@ -419,65 +421,7 @@ export default function TopBar() {
         )}
 
         {/* ─── Theme Switcher ─── */}
-        <div
-          className="flex items-center gap-[2px] p-[2px] rounded-lg"
-          style={{
-            background: 'var(--surface-2, rgba(255,255,255,0.03))',
-            border: '1px solid var(--border, rgba(255,255,255,0.06))',
-          }}
-          role="radiogroup"
-          aria-label="Theme"
-        >
-          {/* Dark mode button */}
-          <button
-            onClick={() => setTheme('dark')}
-            className="w-9 h-9 rounded-[6px] grid place-items-center cursor-pointer"
-            style={{
-              background: theme === 'dark' ? 'var(--accent)' : 'transparent',
-              color: theme === 'dark' ? 'var(--bg)' : 'var(--muted)',
-              border: 'none',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            }}
-            role="radio"
-            aria-checked={theme === 'dark'}
-            aria-label="Dark theme"
-          >
-            <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
-              <path
-                d="M13.5 9.5a6 6 0 01-7-7 6 6 0 107 7z"
-                stroke="currentColor"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-
-          {/* Sunset mode button */}
-          <button
-            onClick={() => setTheme('sunset')}
-            className="w-9 h-9 rounded-[6px] grid place-items-center cursor-pointer"
-            style={{
-              background: theme === 'sunset' ? 'var(--accent)' : 'transparent',
-              color: theme === 'sunset' ? 'var(--bg)' : 'var(--muted)',
-              border: 'none',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            }}
-            role="radio"
-            aria-checked={theme === 'sunset'}
-            aria-label="Sunset theme"
-          >
-            <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
-              <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.3" />
-              <path
-                d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-        </div>
+        <ThemeSlider />
       </div>
 
       {/* Export Modal for Google Maps, Apple Maps, GPX, and KML */}
@@ -494,6 +438,13 @@ export default function TopBar() {
       <SavedTripsModal
         isOpen={isSavedTripsOpen}
         onClose={() => setIsSavedTripsOpen(false)}
+      />
+
+      {/* New Trip Confirmation Modal */}
+      <NewTripConfirmModal
+        isOpen={isNewTripModalOpen}
+        onClose={() => setIsNewTripModalOpen(false)}
+        onConfirm={() => dispatch({ type: 'START_NEW_TRIP' })}
       />
     </header>
   );

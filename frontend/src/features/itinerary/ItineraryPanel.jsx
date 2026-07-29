@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTrip, DEFAULT_BUDGET_ITEMS } from '../../context/TripContext';
+import { useAuth } from '../../context/AuthContext';
 import { getDayColorHex } from '../../utils/colors';
 import { haversine } from '../../utils/haversine';
 import { fetchOptimizedOrder } from '../../utils/routeService';
 import { getCurrencySymbol } from '../../utils/currency';
 import { getStopLabel, CategoryIcon } from '../../utils/stopUtils';
 import { buildGoogleMapsUrl, buildSinglePlaceGoogleMapsUrl } from '../../utils/exportUtils';
-import { AlertTriangle, Footprints, Car, Train, Compass, Star, Trash2, Moon, MapPin } from 'lucide-react';
+import { AlertTriangle, Footprints, Car, Train, Compass, Star, Trash2, Moon, MapPin, Heart } from 'lucide-react';
 
 /* ─── Skeleton Shimmer for Generating State ─── */
 function SkeletonDay({ idx }) {
@@ -45,10 +46,35 @@ function SkeletonDay({ idx }) {
 
 export default function ItineraryPanel() {
   const { state, dispatch } = useTrip();
+  const { user, addToWishlist, removeFromWishlist, isInWishlist } = useAuth();
   const [expandedDayId, setExpandedDayId] = useState(null);
   const [activeRationaleId, setActiveRationaleId] = useState(null);
   const [optimizingDayId, setOptimizingDayId] = useState(null);
   const [isBudgetOpen, setIsBudgetOpen] = useState(false);
+  const [wishlistSaving, setWishlistSaving] = useState(false);
+
+  const tripDestinationName = state.trip?.title || 'Trip Destination';
+  const isTripWishlisted = isInWishlist(tripDestinationName);
+
+  const handleToggleTripWishlist = async () => {
+    if (wishlistSaving) return;
+    setWishlistSaving(true);
+    try {
+      if (isTripWishlisted) {
+        await removeFromWishlist(tripDestinationName);
+      } else {
+        await addToWishlist({
+          name: tripDestinationName,
+          notes: `Saved from Wanderloop itinerary (${state.trip?.days?.length || 0} Days)`,
+          category: 'Destination',
+        });
+      }
+    } catch (err) {
+      console.error('Failed to update wishlist:', err);
+    } finally {
+      setWishlistSaving(false);
+    }
+  };
 
   // ─── Drag-and-Drop State ───
   const [dragState, setDragState] = useState({ dayId: null, dragIdx: null, overIdx: null });
@@ -109,21 +135,41 @@ export default function ItineraryPanel() {
     setNewStopRationale('');
   };
 
-  const handleConfirmAddStop = (e) => {
+  const handleConfirmAddStop = async (e) => {
     e.preventDefault();
     if (!newStopName.trim()) return;
 
+    const stopTitle = newStopName.trim();
     const costNum = Number(newStopCost) || 0;
     const targetDay = state.trip?.days?.find(d => d.id === addStopModalDayId);
-    const baseStop = targetDay?.stops?.[0];
-    const baseLat = baseStop?.lat || state.mapCenter?.lat || 20.0;
-    const baseLng = baseStop?.lng || state.mapCenter?.lng || 78.0;
+    const baseStop = targetDay?.stops?.[targetDay?.stops?.length - 1] || targetDay?.stops?.[0];
+    const baseLat = baseStop?.lat || state.mapCenter?.lat || 35.6895;
+    const baseLng = baseStop?.lng || state.mapCenter?.lng || 139.6917;
+
+    let stopLat = baseLat + (Math.random() - 0.5) * 0.005;
+    let stopLng = baseLng + (Math.random() - 0.5) * 0.005;
+
+    try {
+      const res = await fetch(`/api/geocode?text=${encodeURIComponent(stopTitle)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.features && data.features.length > 0) {
+          const [geoLng, geoLat] = data.features[0].geometry.coordinates;
+          if (typeof geoLat === 'number' && typeof geoLng === 'number' && !isNaN(geoLat) && !isNaN(geoLng)) {
+            stopLat = geoLat;
+            stopLng = geoLng;
+          }
+        }
+      }
+    } catch (geoErr) {
+      console.warn('Manual stop geocode fallback:', geoErr);
+    }
 
     const newStop = {
       id: `s-added-${Date.now()}`,
-      name: newStopName.trim(),
-      lat: baseLat + (Math.random() - 0.5) * 0.01,
-      lng: baseLng + (Math.random() - 0.5) * 0.01,
+      name: stopTitle,
+      lat: stopLat,
+      lng: stopLng,
       timeEstimate: newStopTime || '10:00 AM - 12:00 PM',
       costEstimate: costNum,
       rationale: newStopRationale.trim() || 'Custom user added stop',
@@ -348,16 +394,36 @@ export default function ItineraryPanel() {
           </div>
           Itinerary
         </h2>
-        <span
-          className="text-[9px] font-mono px-2 py-0.5 rounded-md"
-          style={{
-            background: 'var(--surface-3)',
-            border: '1px solid var(--border)',
-            color: 'var(--muted)'
-          }}
-        >
-          {state.trip?.days?.reduce((acc, d) => acc + (d.stops?.length || 0), 0) || 0} Stops · {numDays}D
-        </span>
+
+        <div className="flex items-center gap-2">
+          {/* Wishlist Destination Heart Button */}
+          <button
+            type="button"
+            onClick={handleToggleTripWishlist}
+            disabled={wishlistSaving}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer border"
+            style={{
+              background: isTripWishlisted ? 'rgba(244, 63, 94, 0.15)' : 'var(--surface-3)',
+              borderColor: isTripWishlisted ? 'rgba(244, 63, 94, 0.4)' : 'var(--border)',
+              color: isTripWishlisted ? '#f43f5e' : 'var(--muted)',
+            }}
+            title={isTripWishlisted ? 'Remove destination from Wishlist' : 'Save destination to Wishlist'}
+          >
+            <Heart className={`w-3.5 h-3.5 ${isTripWishlisted ? 'fill-rose-500 text-rose-500' : ''}`} />
+            <span>{isTripWishlisted ? 'Saved' : 'Wishlist'}</span>
+          </button>
+
+          <span
+            className="text-[9px] font-mono px-2 py-0.5 rounded-md"
+            style={{
+              background: 'var(--surface-3)',
+              border: '1px solid var(--border)',
+              color: 'var(--muted)'
+            }}
+          >
+            {state.trip?.days?.reduce((acc, d) => acc + (d.stops?.length || 0), 0) || 0} Stops · {numDays}D
+          </span>
+        </div>
       </div>
 
       {/* Budget Spent Bar */}

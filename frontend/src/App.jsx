@@ -24,7 +24,7 @@ export default function App() {
 
   // Stable fingerprint of trip stops to avoid re-fetching lodgings on every minor state change
   const tripStopsFingerprint = state.trip?.days
-    ?.map(d => `${d.id}:${(d.stops || []).map(s => `${s.lat.toFixed(3)},${s.lng.toFixed(3)}`).join('|')}`)
+    ?.map(d => `${d.id}:${(d.stops || []).map(s => `${(parseFloat(s?.lat) || 0).toFixed(3)},${(parseFloat(s?.lng) || 0).toFixed(3)}`).join('|')}`)
     .join('_') || '';
 
   // Fetch real/dynamic lodgings from the backend when stops change (distributed for each day)

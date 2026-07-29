@@ -713,7 +713,14 @@ export default function MapPanel() {
 
   const initialFitDoneRef = useRef(false);
 
-  // Auto-fit bounds on initial load only (prevents map from zooming out when stops are added/updated)
+  // Reset initialFitDone when trip ID changes so new itineraries automatically fit map bounds
+  useEffect(() => {
+    if (state.trip?.id) {
+      initialFitDoneRef.current = false;
+    }
+  }, [state.trip?.id]);
+
+  // Auto-fit bounds on initial load & whenever a new trip is loaded
   useEffect(() => {
     const map = mapRef.current;
     if (!map || useMockMap) return;
@@ -736,7 +743,22 @@ export default function MapPanel() {
     return () => {
       map.off('load', fitOnLoad);
     };
-  }, [useMockMap, fitTripBounds]);
+  }, [useMockMap, fitTripBounds, state.trip?.id]);
+
+  // Resize map and sync markers when active tab or chat panel visibility changes
+  useEffect(() => {
+    if (mapRef.current && !useMockMap) {
+      const timer = setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.resize();
+          if (syncMapDataRef.current) {
+            syncMapDataRef.current();
+          }
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [state.activeTab, state.showChat, useMockMap]);
 
   // Handle AI-triggered map center changes
   useEffect(() => {

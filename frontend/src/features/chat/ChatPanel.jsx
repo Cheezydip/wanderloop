@@ -317,7 +317,7 @@ export default function ChatPanel() {
                     ? {
                         background: 'var(--accent-dim)',
                         border: '1px solid var(--accent-border)',
-                        color: 'var(--accent)',
+                        color: 'var(--text)',
                         borderRadius: '12px 12px 2px 12px',
                         whiteSpace: 'pre-wrap'
                       }
