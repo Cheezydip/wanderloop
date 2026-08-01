@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../context/AuthContext';
+import { useTrip } from '../context/TripContext';
 import { User, Mail, Lock, X, ArrowRight, Loader2 } from 'lucide-react';
 
 export default function AuthModal() {
   const { authModalOpen, closeAuthModal, login, signup, loginWithGoogle, openAuthModal, error: authError } = useAuth();
+  const { dispatch: tripDispatch } = useTrip();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -22,6 +24,7 @@ export default function AuthModal() {
       setLocalError(null);
       try {
         await loginWithGoogle({ accessToken: tokenResponse.access_token });
+        tripDispatch({ type: 'ACTIVATE_SESSION' });
       } catch (err) {
         setLocalError(err.message || 'Google login failed.');
       } finally {
@@ -68,6 +71,7 @@ export default function AuthModal() {
       } else {
         await login(email, password);
       }
+      tripDispatch({ type: 'ACTIVATE_SESSION' });
       // Reset fields on success
       setName('');
       setEmail('');

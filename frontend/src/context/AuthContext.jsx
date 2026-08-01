@@ -121,6 +121,9 @@ export function AuthProvider({ children }) {
       console.error('Logout failed:', err);
     } finally {
       setUser(null);
+      try {
+        sessionStorage.removeItem('wanderloop_session_active');
+      } catch (err) {}
     }
   };
 

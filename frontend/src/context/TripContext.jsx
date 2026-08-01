@@ -3,11 +3,13 @@ import { mockTrip, mockHomestays, mockKyotoTrip, mockOsakaTrip, mockHakoneTrip }
 import { getTripCurrency, getDefaultBudgetLimit } from '../utils/currency';
 
 const TRIP_STORAGE_KEY = 'wanderloop_active_trip';
+const SESSION_ACTIVE_KEY = 'wanderloop_session_active';
 
 function loadInitialState(defaultState) {
   try {
+    const isSessionActive = sessionStorage.getItem(SESSION_ACTIVE_KEY) === 'true';
     const saved = localStorage.getItem(TRIP_STORAGE_KEY);
-    if (saved) {
+    if (isSessionActive && saved) {
       const parsed = JSON.parse(saved);
       if (parsed && parsed.hasTrip && parsed.trip) {
         return {
@@ -483,9 +485,51 @@ function tripReducer(state, action) {
       };
     }
 
+    case 'ACTIVATE_SESSION': {
+      try {
+        sessionStorage.setItem(SESSION_ACTIVE_KEY, 'true');
+      } catch (err) {}
+
+      let currentTrip = state.trip;
+      let selectedHomestaysByDay = state.selectedHomestaysByDay;
+      let selectedHomestayId = state.selectedHomestayId;
+      let budgetItems = state.budgetItems;
+
+      if (!currentTrip) {
+        try {
+          const saved = localStorage.getItem(TRIP_STORAGE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.trip) {
+              currentTrip = parsed.trip;
+              selectedHomestaysByDay = parsed.selectedHomestaysByDay || {};
+              selectedHomestayId = parsed.selectedHomestayId || null;
+              budgetItems = parsed.budgetItems || syncBudgetItems(currentTrip, [], selectedHomestaysByDay, selectedHomestayId);
+            }
+          }
+        } catch (err) {}
+      }
+
+      if (!currentTrip) {
+        currentTrip = mockTrip;
+        budgetItems = syncBudgetItems(mockTrip, [], {}, null);
+      }
+
+      return {
+        ...state,
+        trip: currentTrip,
+        hasTrip: true,
+        showQuestionnaire: false,
+        selectedHomestaysByDay: selectedHomestaysByDay || {},
+        selectedHomestayId: selectedHomestayId || null,
+        budgetItems: budgetItems || [],
+      };
+    }
+
     case 'START_NEW_TRIP':
       try {
         localStorage.removeItem(TRIP_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_ACTIVE_KEY);
       } catch (err) {}
       return {
         ...state,
@@ -634,10 +678,11 @@ const TripContext = createContext(undefined);
 export function TripProvider({ children }) {
   const [state, dispatch] = useReducer(tripReducer, initialState, loadInitialState);
 
-  // Sync active trip state to localStorage
+  // Sync active trip state to localStorage and sessionStorage
   useEffect(() => {
     if (state.hasTrip && state.trip) {
       try {
+        sessionStorage.setItem(SESSION_ACTIVE_KEY, 'true');
         const stateToPersist = {
           trip: state.trip,
           hasTrip: state.hasTrip,
@@ -660,8 +705,9 @@ export function TripProvider({ children }) {
     } else {
       try {
         localStorage.removeItem(TRIP_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_ACTIVE_KEY);
       } catch (err) {
-        console.error('Failed to remove trip state from localStorage:', err);
+        console.error('Failed to remove trip state from localStorage/sessionStorage:', err);
       }
     }
   }, [

@@ -209,6 +209,7 @@ export default function UserProfileDropdown({ onOpenSavedTrips, onOpenNewTripMod
                 onClick={() => {
                   setIsOpen(false);
                   logout();
+                  dispatch({ type: 'START_NEW_TRIP' });
                 }}
                 className="w-full flex items-center gap-2.5 p-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all text-left text-rose-400 hover:bg-rose-500/15"
               >
