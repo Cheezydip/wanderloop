@@ -642,7 +642,7 @@ export default function ItineraryPanel() {
                           ];
                           return (
                             <a
-                              href={buildGoogleMapsUrl(dayStopsWithHotel, 'transit', state.trip?.title)}
+                              href={buildGoogleMapsUrl(dayStopsWithHotel, 'transit', state.trip?.title, state.trip?.destination)}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}

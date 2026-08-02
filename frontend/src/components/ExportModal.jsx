@@ -79,7 +79,7 @@ export default function ExportModal({
     }
   }
 
-  const googleMapsUrl = buildGoogleMapsUrl(activeStops, travelMode, trip?.title);
+  const googleMapsUrl = buildGoogleMapsUrl(activeStops, travelMode, trip?.title, trip?.destination);
   const appleMapsUrl = buildAppleMapsUrl(activeStops, trip?.title);
 
   const handleCopyLink = async () => {

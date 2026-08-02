@@ -111,11 +111,30 @@ router.post('/chat', async (req, res) => {
       return res.status(400).json({ error: 'messages array is required' });
     }
 
+    const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001/api/v1/generate-trip';
+
+    try {
+      console.log(`[server]: Forwarding request to Wanderloop AI Microservice at ${AI_SERVICE_URL}...`);
+      const aiRes = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages, currentTrip })
+      });
+
+      if (aiRes.ok) {
+        const jsonResponse = await aiRes.json();
+        console.log('[server]: Received response successfully from AI Microservice!');
+        return res.json(jsonResponse);
+      }
+    } catch (aiErr) {
+      console.warn('[server]: AI Microservice connection failed, attempting fallback to cloud provider...', aiErr.message);
+    }
+
     const apiKey = process.env.NVIDIA_API_KEY;
     const baseUrl = process.env.NIM_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
 
     if (!apiKey) {
-      return res.status(500).json({ error: 'NVIDIA_API_KEY is not configured on the server.' });
+      return res.status(500).json({ error: 'AI Microservice is offline and NVIDIA_API_KEY is not configured.' });
     }
 
     // Format messages for Llama 3.1
@@ -125,14 +144,12 @@ router.post('/chat', async (req, res) => {
 
     // Map roles: 'user' -> 'user', 'assistant' -> 'assistant'
     messages.forEach((msg) => {
-      // Avoid passing raw HTML rendered text if possible, but standard is fine
       nimMessages.push({
         role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: msg.content
       });
     });
 
-    // If there is an active trip, append a helper message to system context or user context so Llama knows the current state
     if (currentTrip && Object.keys(currentTrip).length > 0 && currentTrip.days && currentTrip.days.length > 0) {
       nimMessages.push({
         role: 'system',
@@ -141,13 +158,18 @@ router.post('/chat', async (req, res) => {
     }
 
     let response;
-    const candidateModels = ['meta/llama-3.1-8b-instruct', 'meta/llama-3.1-70b-instruct'];
+    const candidateModels = [
+      'meta/llama-3.3-70b-instruct',
+      'nvidia/llama-3.1-nemotron-51b-instruct',
+      'meta/llama3-70b-instruct',
+      'meta/llama-3.1-8b-instruct'
+    ];
     let lastError;
 
     for (const modelCandidate of candidateModels) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s max per model
+        const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s max per model for cloud fallback
 
         response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
@@ -183,22 +205,17 @@ router.post('/chat', async (req, res) => {
     const data = await response.json();
     let rawText = data.choices[0].message.content.trim();
 
-    // Parse the JSON response with multi-stage recovery for truncated responses
     let jsonResponse;
     try {
       jsonResponse = JSON.parse(rawText);
     } catch (parseErr) {
-      // Stage 1: strip markdown fences
       let cleanText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
       try {
         jsonResponse = JSON.parse(cleanText);
       } catch (e2) {
-        // Stage 2: attempt to repair truncated JSON by closing open structures
         console.warn('[server]: JSON parse failed, attempting repair...');
         jsonResponse = tryRepairJSON(cleanText);
         if (!jsonResponse) {
-          console.error('Failed to parse or repair NIM JSON response. Raw (first 500 chars):', rawText.slice(0, 500));
-          // Return a safe fallback so the frontend doesn't crash
           return res.status(200).json({
             message: 'I had trouble generating the full itinerary. Please try again or rephrase your request — I will get it right!',
             trip: null,

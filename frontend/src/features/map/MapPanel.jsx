@@ -7,6 +7,7 @@ import { haversine, getTravelLabel } from '../../utils/haversine';
 import { fetchRoute } from '../../utils/routeService';
 import { getCurrencySymbol, estimateStopCost } from '../../utils/currency';
 import { getStopLabel } from '../../utils/stopUtils';
+import { buildSinglePlaceGoogleMapsUrl } from '../../utils/exportUtils';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -1369,9 +1370,10 @@ export default function MapPanel() {
                     <span>${stop.timeEstimate || ''}</span>
                     ${stop.costEstimate > 0 ? `<span>·</span><span>${currencySymbol}${stop.costEstimate.toLocaleString()}</span>` : '<span>·</span><span>Free</span>'}
                   </div>
-                  <div class="popup-desc" style="font-size: 12px; line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${stop.rationale}</div>
+                  <div class="popup-desc" style="font-size: 12px; line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border);">${stop.shortDescription || stop.rationale}</div>
                   <div style="display: flex; gap: 6px; margin-top: 10px;">
                     <button class="nearby-btn" style="flex: 1; padding: 6px 0; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">Nearby</button>
+                    <a class="gmaps-btn" href="${buildSinglePlaceGoogleMapsUrl(stop, state.trip?.title)}" target="_blank" rel="noopener noreferrer" style="padding: 6px 8px; background: #4285F4; color: #ffffff; border: none; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Open in Google Maps">Maps ↗</a>
                     <button class="delete-btn" style="padding: 6px 10px; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;">Delete</button>
                   </div>
                 </div>
@@ -1402,6 +1404,12 @@ export default function MapPanel() {
             if (closeBtn) {
               closeBtn.addEventListener('click', handleClose);
               closeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            }
+
+            const gmapsBtn = popupContent.querySelector('.gmaps-btn');
+            if (gmapsBtn) {
+              gmapsBtn.addEventListener('click', (e) => e.stopPropagation());
+              gmapsBtn.addEventListener('mousedown', (e) => e.stopPropagation());
             }
 
             popupContent.querySelector('.nearby-btn').addEventListener('click', (e) => {

@@ -1,6 +1,8 @@
-/**
- * Export utilities for generating Google Maps, Apple Maps, GPX, and KML links/files for Wanderloop itineraries.
- */
+export function parseCoordinate(val) {
+  if (val === null || val === undefined) return null;
+  const num = typeof val === 'number' ? val : parseFloat(val);
+  return (typeof num === 'number' && !isNaN(num) && isFinite(num) && num !== 0) ? num : null;
+}
 
 /**
  * Extracts all stops across all days in sequential order, including selected hotels/homestays.
@@ -42,7 +44,10 @@ export function getAllStopsFromTrip(
           shouldInclude = includeHotels[key] !== false;
         }
 
-        if (shouldInclude && hotel && typeof hotel.lat === 'number' && typeof hotel.lng === 'number') {
+        const hLat = parseCoordinate(hotel.lat);
+        const hLng = parseCoordinate(hotel.lng);
+
+        if (shouldInclude && hotel && (hLat !== null || (hotel.name && hotel.name.trim().length > 0))) {
           const hotelName = hotel.name.toLowerCase().includes('hotel') ||
             hotel.name.toLowerCase().includes('ryokan') ||
             hotel.name.toLowerCase().includes('homestay') ||
@@ -54,8 +59,8 @@ export function getAllStopsFromTrip(
           allStops.push({
             id: key,
             name: hotelName,
-            lat: hotel.lat,
-            lng: hotel.lng,
+            lat: hLat !== null ? hLat : hotel.lat,
+            lng: hLng !== null ? hLng : hotel.lng,
             dayNumber: day.dayNumber,
             dayId: day.id,
             timeEstimate: 'Overnight Stay / Starting Point',
@@ -68,9 +73,14 @@ export function getAllStopsFromTrip(
 
     // Add regular itinerary stops
     (day.stops || []).forEach(stop => {
-      if (stop && typeof stop.lat === 'number' && typeof stop.lng === 'number') {
+      if (!stop) return;
+      const sLat = parseCoordinate(stop.lat);
+      const sLng = parseCoordinate(stop.lng);
+      if (sLat !== null || (stop.name && stop.name.trim().length > 0)) {
         allStops.push({
           ...stop,
+          lat: sLat !== null ? sLat : stop.lat,
+          lng: sLng !== null ? sLng : stop.lng,
           dayNumber: day.dayNumber,
           dayId: day.id
         });
@@ -82,71 +92,67 @@ export function getAllStopsFromTrip(
 }
 
 /**
- * Builds a Google Maps Directions URL for a given array of stops.
-/**
  * Formats a stop into a location string suitable for Google Maps API.
  * Uses place names with destination city context when available,
  * or raw lat,lng as fallback.
  */
-export function formatStopForMaps(stop, tripTitle = '') {
+export function formatStopForMaps(stop, tripTitle = '', destination = '') {
   if (!stop) return '';
 
+  const lat = parseCoordinate(stop.lat);
+  const lng = parseCoordinate(stop.lng);
+
+  if (lat !== null && lng !== null) {
+    return `${lat},${lng}`;
+  }
+
   if (stop.name && typeof stop.name === 'string' && stop.name.trim().length > 0) {
-    let cleanName = stop.name.trim();
-
-    // Clean up hotel suffix or extra parenthesis formatting if present
-    cleanName = cleanName.replace(/\s*\(Hotel\)/gi, '').replace(/\(([^)]+)\)/g, '$1');
-
-    // Extract city context from trip title
-    let city = '';
-    if (tripTitle && typeof tripTitle === 'string') {
-      const lowerTitle = tripTitle.toLowerCase();
-      if (lowerTitle.includes('tokyo')) city = 'Tokyo';
-      else if (lowerTitle.includes('kyoto')) city = 'Kyoto';
-      else if (lowerTitle.includes('osaka')) city = 'Osaka';
-      else if (lowerTitle.includes('hakone')) city = 'Hakone';
-    }
-
+    let cleanName = stop.name.trim().replace(/\s*\(Hotel\)/gi, '').replace(/\(([^)]+)\)/g, '$1');
+    const city = destination || (tripTitle ? tripTitle.split(' ')[0] : '');
     if (city && !cleanName.toLowerCase().includes(city.toLowerCase())) {
       cleanName += `, ${city}`;
     }
-
     return encodeURIComponent(cleanName);
-  }
-
-  if (typeof stop.lat === 'number' && typeof stop.lng === 'number' && !isNaN(stop.lat) && !isNaN(stop.lng)) {
-    return `${stop.lat},${stop.lng}`;
   }
 
   return '';
 }
 
-export function buildGoogleMapsUrl(stops = [], travelMode = 'transit', tripTitle = '') {
+export function buildGoogleMapsUrl(stops = [], travelMode = 'transit', tripTitle = '', destination = '') {
   if (!stops || !Array.isArray(stops) || stops.length === 0) {
     return 'https://www.google.com/maps';
   }
 
-  const validStops = stops.filter(s => s && (s.name || (typeof s.lat === 'number' && typeof s.lng === 'number')));
+  const validStops = stops.filter(s => s && (s.name || parseCoordinate(s.lat) !== null));
   if (validStops.length === 0) return 'https://www.google.com/maps';
 
   const validTravelMode = ['transit', 'walking', 'driving', 'bicycling'].includes(travelMode) ? travelMode : 'transit';
 
   if (validStops.length === 1) {
-    const single = validStops[0];
-    const query = formatStopForMaps(single, tripTitle);
-    return `https://www.google.com/maps/search/?api=1&query=${query}`;
+    return buildSinglePlaceGoogleMapsUrl(validStops[0], tripTitle, destination);
   }
 
-  const originParam = formatStopForMaps(validStops[0], tripTitle);
-  const destParam = formatStopForMaps(validStops[validStops.length - 1], tripTitle);
+  const formatRouteStop = (s) => {
+    const lat = parseCoordinate(s.lat);
+    const lng = parseCoordinate(s.lng);
+    if (lat !== null && lng !== null) {
+      return `${lat},${lng}`;
+    }
+    return formatStopForMaps(s, tripTitle, destination);
+  };
+
+  const originParam = formatRouteStop(validStops[0]);
+  const destParam = formatRouteStop(validStops[validStops.length - 1]);
 
   let url = `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=${validTravelMode}`;
 
   const intermediateStops = validStops.slice(1, validStops.length - 1);
   if (intermediateStops.length > 0) {
-    const cappedWaypoints = intermediateStops.slice(0, 9);
-    const waypointsParam = cappedWaypoints.map(s => formatStopForMaps(s, tripTitle)).join('%7C');
-    url += `&waypoints=${waypointsParam}`;
+    const cappedWaypoints = intermediateStops.slice(0, 23);
+    const waypointsParam = cappedWaypoints.map(formatRouteStop).filter(Boolean).join('%7C');
+    if (waypointsParam) {
+      url += `&waypoints=${waypointsParam}`;
+    }
   }
 
   return url;
@@ -155,27 +161,68 @@ export function buildGoogleMapsUrl(stops = [], travelMode = 'transit', tripTitle
 /**
  * Builds an Apple Maps direction link for iOS / macOS devices.
  */
-export function buildAppleMapsUrl(stops = [], tripTitle = '') {
-  const validStops = stops.filter(s => s && (s.name || (typeof s.lat === 'number' && typeof s.lng === 'number')));
+export function buildAppleMapsUrl(stops = [], tripTitle = '', destination = '') {
+  const validStops = stops.filter(s => s && (s.name || parseCoordinate(s.lat) !== null));
   if (validStops.length === 0) return 'https://maps.apple.com';
 
   if (validStops.length === 1) {
     const single = validStops[0];
-    return `https://maps.apple.com/?q=${formatStopForMaps(single, tripTitle)}`;
+    const lat = parseCoordinate(single.lat);
+    const lng = parseCoordinate(single.lng);
+    const q = (lat !== null && lng !== null)
+      ? `${lat},${lng}`
+      : formatStopForMaps(single, tripTitle, destination);
+    return `https://maps.apple.com/?q=${q}`;
   }
 
-  const origin = formatStopForMaps(validStops[0], tripTitle);
-  const dest = formatStopForMaps(validStops[validStops.length - 1], tripTitle);
-  return `https://maps.apple.com/?saddr=${origin}&daddr=${dest}`;
+  const formatAppleStop = (s) => {
+    const lat = parseCoordinate(s.lat);
+    const lng = parseCoordinate(s.lng);
+    if (lat !== null && lng !== null) {
+      return `${lat},${lng}`;
+    }
+    return formatStopForMaps(s, tripTitle, destination);
+  };
+
+  const origin = formatAppleStop(validStops[0]);
+  const destinationParam = formatAppleStop(validStops[validStops.length - 1]);
+  const middleStops = validStops.slice(1, validStops.length - 1);
+
+  if (middleStops.length === 0) {
+    return `https://maps.apple.com/?saddr=${origin}&daddr=${destinationParam}`;
+  }
+
+  const daddrs = [...middleStops.map(formatAppleStop), destinationParam].join('&daddr=');
+  return `https://maps.apple.com/?saddr=${origin}&daddr=${daddrs}`;
 }
 
 /**
- * Builds a Google Maps search link for a single place.
+ * Builds a Google Maps search/place link for a single place with exact pin positioning.
  */
-export function buildSinglePlaceGoogleMapsUrl(stop, tripTitle = '') {
+export function buildSinglePlaceGoogleMapsUrl(stop, tripTitle = '', destination = '') {
   if (!stop) return 'https://www.google.com/maps';
-  const query = formatStopForMaps(stop, tripTitle);
-  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+
+  const lat = parseCoordinate(stop.lat);
+  const lng = parseCoordinate(stop.lng);
+  const hasCoords = lat !== null && lng !== null;
+  let cleanName = stop.name ? stop.name.trim().replace(/\s*\(Hotel\)/gi, '').replace(/\(([^)]+)\)/g, '$1') : '';
+
+  if (hasCoords) {
+    if (cleanName) {
+      return `https://www.google.com/maps/place/${encodeURIComponent(cleanName)}/@${lat},${lng},17z`;
+    }
+    return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  }
+
+  if (cleanName) {
+    const city = destination || (tripTitle ? tripTitle.split(' ')[0] : '');
+    if (city && !cleanName.toLowerCase().includes(city.toLowerCase())) {
+      cleanName += `, ${city}`;
+    }
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cleanName)}`;
+  }
+
+  return 'https://www.google.com/maps';
 }
 
 /**
