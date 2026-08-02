@@ -7,7 +7,7 @@
     "backend"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev -w frontend\" \"npm run dev -w backend\"",
+    "dev": "concurrently \"npm run dev -w frontend\" \"npm run dev -w backend\" \"npm start --prefix ../wanderloop-ai-service\"",
     "build": "npm run build -w frontend && npm run build -w backend",
     "lint": "npm run lint -w frontend && npm run lint -w backend",
     "format": "npm run format -w frontend && npm run format -w backend"
