@@ -34,17 +34,48 @@ KEY RULES:
 3. "trip": YOU MUST PROVIDE A COMPLETE TripObject IMMEDIATELY if the user specifies a destination or asks for an itinerary. DO NOT wait for more details. Never set to null if a destination is known.
 4. "mapCenter": Always set when generating/updating a trip.
 
+DESTINATION DISAMBIGUATION (CRITICAL):
+- "USA", "US", "U.S.A.", "United States", "America" ALL mean the country "United States of America". NEVER interpret these as "Usa River" (Tanzania) or any other place.
+- "UK" means "United Kingdom". "Turkey" means the country "Türkiye". "China" means the country.
+- MULTI-CITY / COUNTRY-WIDE TRIPS: When the user says "explore whole USA" or "trip across Japan" or mentions MULTIPLE cities, generate a MULTI-CITY itinerary:
+  * Set "destination" to the FIRST city (e.g. "Los Angeles" for a west-to-east US trip).
+  * Spread days across ALL cities the user mentioned. Each day should be in ONE city.
+  * If user mentions specific cities, use those. If they just say "USA" or "India", pick 3-5 major tourist cities.
+  * Use REAL landmark names for each stop (e.g. "Statue of Liberty", "Times Square", "Hollywood Sign"), NOT generic names like "Cultural Heritage Landmark".
+- For single-city trips, set "destination" to that city name.
+
+STOP NAMING RULES (CRITICAL):
+1. EVERY stop "name" MUST be the REAL, ACTUAL name of a specific place, attraction, park, museum, restaurant, or landmark.
+2. NEVER use generic names like "Cultural Heritage Landmark", "Artisan Market", "Panoramic Sunset Viewpoint", "Local Dining Spot".
+3. Good examples: "Central Park", "The Metropolitan Museum of Art", "Pike Place Market", "Golden Gate Bridge", "Griffith Observatory".
+4. Bad examples: "City Cultural Heritage Landmark - Day 3", "City Artisan Market & Local Dining", "Panoramic Viewpoint".
+
+TRIP DURATION & DAYS RULE (CRITICAL):
+1. ALWAYS check the user's prompt for requested trip duration (e.g. "5 days", "10-day", "2 weeks", "a week", "3-day", "weekend").
+2. Your "days" array MUST contain the EXACT number of days requested by the user. If user requested 5 days, generate 5 days in "days". If user requested 2 weeks, generate 14 days.
+3. NEVER default to 2 or 3 days when the user explicitly asked for a different number of days.
+
+BUDGET CALCULATION RULE (CRITICAL):
+1. "budget" in TripObject MUST be the TOTAL TRIP BUDGET for the entire trip (NOT per-day!).
+2. If user specifies a per-day rate (e.g. "$80-120 per day" or "$100/day"):
+   Calculate: TOTAL BUDGET = (Average Daily Rate) * (Total Days).
+   Example: $100/day for 5 days = 500 total budget.
+   Example: $100/day for 14 days = 1400 total budget.
+3. NEVER put a single-day number (like 80 or 100) into the "budget" field when total days > 1.
+4. Ensure the total sum of budgetItems (Accommodation + Food + Activities + Transport) fits within "budget" so the budget is not falsely marked as exceeded.
+
 TRIP GENERATION RULES:
-1. Default to 3-4 days UNLESS user specifies a different number.
+1. Default to 3-4 days UNLESS user specifies a different number of days.
 2. Every day MUST have 3-5 stops (never fewer than 3). Spread stops across morning/midday/afternoon/evening.
 3. Each stop "rationale" (2-3 sentences): describe activities at this spot and name 1-2 nearby cafes/street food.
    - For the FIRST stop of each day (order: 1): state clearly where the traveler starts from (e.g. "Start your day from your hotel/accommodation in <area>. Take <transport> to reach here in about <time>.")
    - For subsequent stops: state the specific previous stop name and how to travel from it (e.g. "From <previous stop name>, take a <transport> for <time> to get here.")
    - When the user requests a specific mode of transport (e.g. train, bus, taxi), always mention the origin station/stop and destination station/stop.
-4. Use accurate real-world coordinates for the destination city.
-5. Keep all stops in a single day within 15km of each other for feasibility.
+4. Use accurate real-world coordinates for the destination city. Coordinates MUST be real lat/lng for that specific landmark.
+5. Keep all stops in a single day within 15km of each other for feasibility. For multi-city trips, stops within the SAME DAY should be in the same city.
 6. No asterisks (* or **) anywhere in the response.
 7. Each day MUST have a DIFFERENT colorHue. Cycle through: "teal" (day 1), "amber" (day 2), "violet" (day 3), "rose" (day 4), "lime" (day 5), then repeat.
+8. For multi-city trips spanning multiple days, each day should be set in ONE city. Use the "rationale" of the first stop to describe intercity travel (e.g. "Fly from LA to Chicago, 4hr flight").
 
 TripObject structure:
 {
@@ -113,6 +144,9 @@ router.post('/chat', async (req, res) => {
 
     const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001/api/v1/generate-trip';
 
+    let jsonResponse = null;
+    let usedAiMicroservice = false;
+
     try {
       console.log(`[server]: Forwarding request to Wanderloop AI Microservice at ${AI_SERVICE_URL}...`);
       const aiRes = await fetch(AI_SERVICE_URL, {
@@ -122,14 +156,16 @@ router.post('/chat', async (req, res) => {
       });
 
       if (aiRes.ok) {
-        const jsonResponse = await aiRes.json();
-        console.log('[server]: Received response successfully from AI Microservice!');
-        return res.json(jsonResponse);
+        jsonResponse = await aiRes.json();
+        usedAiMicroservice = true;
+        console.log('[server]: Received response from AI Microservice — will run post-processing pipeline.');
       }
     } catch (aiErr) {
       console.warn('[server]: AI Microservice connection failed, attempting fallback to cloud provider...', aiErr.message);
     }
 
+    // Only use NVIDIA cloud fallback if AI Microservice didn't respond
+    if (!jsonResponse) {
     const apiKey = process.env.NVIDIA_API_KEY;
     const baseUrl = process.env.NIM_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
 
@@ -182,7 +218,7 @@ router.post('/chat', async (req, res) => {
             messages: nimMessages,
             response_format: { type: 'json_object' },
             temperature: 0.5,
-            max_tokens: 3000
+            max_tokens: 4096
           }),
           signal: controller.signal
         });
@@ -205,7 +241,6 @@ router.post('/chat', async (req, res) => {
     const data = await response.json();
     let rawText = data.choices[0].message.content.trim();
 
-    let jsonResponse;
     try {
       jsonResponse = JSON.parse(rawText);
     } catch (parseErr) {
@@ -225,6 +260,7 @@ router.post('/chat', async (req, res) => {
         }
       }
     }
+    } // end NVIDIA fallback
 
     // Normalize jsonResponse structure so trip object is always present if days/itinerary are returned
     if (jsonResponse && !jsonResponse.trip) {
@@ -243,6 +279,23 @@ router.post('/chat', async (req, res) => {
         jsonResponse.trip = jsonResponse.itinerary;
       } else if (jsonResponse.tripObject && Array.isArray(jsonResponse.tripObject.days)) {
         jsonResponse.trip = jsonResponse.tripObject;
+      }
+    }
+
+    // POST-PROCESSING: Fix common LLM destination hallucinations
+    // The LLM sometimes confuses abbreviations/short names with obscure real places
+    let destinationWasCorrected = false;
+    if (jsonResponse && jsonResponse.trip && jsonResponse.trip.destination) {
+      const dest = jsonResponse.trip.destination;
+      const fixedDest = fixHallucinatedDestination(dest, messages);
+      if (fixedDest !== dest) {
+        console.log(`[server]: Fixed hallucinated destination: "${dest}" -> "${fixedDest}"`);
+        jsonResponse.trip.destination = fixedDest;
+        destinationWasCorrected = true;
+        // Also fix the title if it contains the bad destination
+        if (jsonResponse.trip.title) {
+          jsonResponse.trip.title = jsonResponse.trip.title.replace(new RegExp(escapeRegex(dest), 'gi'), fixedDest);
+        }
       }
     }
 
@@ -299,135 +352,95 @@ router.post('/chat', async (req, res) => {
       fallbackCenterLat = jsonResponse.mapCenter.lat;
       fallbackCenterLng = jsonResponse.mapCenter.lng;
     } else if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
-      let foundCenter = false;
       for (const day of jsonResponse.trip.days) {
         if (Array.isArray(day.stops)) {
           const validStop = day.stops.find(s => typeof s.lat === 'number' && !isNaN(s.lat) && typeof s.lng === 'number' && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0);
           if (validStop) {
             fallbackCenterLat = validStop.lat;
             fallbackCenterLng = validStop.lng;
-            foundCenter = true;
             break;
           }
         }
       }
     }
 
-    // Geocode stops securely within a bounding box centered on mapCenter to ensure real targets
+    // POST-PROCESSING: Enforce exact day count and multi-city route if requested by user in prompt
+    // Must run AFTER fallbackCenterLat/Lng are set so new days get correct coordinates
+    let isMultiCity = false;
+    if (jsonResponse && jsonResponse.trip) {
+      const requestedDays = extractRequestedDays(messages);
+      isMultiCity = detectMultiCityTrip(jsonResponse.trip, messages);
+      const targetDays = requestedDays || 14; // Default to 14 days if user prompt suggests multi-city/2+ weeks
+      console.log(`[server]: Enforcing ${targetDays} days (multiCity: ${isMultiCity})...`);
+      enforceRequestedDays(jsonResponse.trip, targetDays, fallbackCenterLat, fallbackCenterLng, messages, isMultiCity);
+    }
+
+    // POST-PROCESSING: Calculate and enforce correct trip budget (Total Budget = Daily Budget * Total Days)
+    if (jsonResponse && jsonResponse.trip) {
+      calculateAndEnforceTripBudget(jsonResponse.trip, messages);
+    }
+
+    // DYNAMIC GEOCODING: Ensure all LLM-generated stops have valid real-world coordinates
     if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
-      const centerLat = fallbackCenterLat;
-      const centerLng = fallbackCenterLng;
-      const viewbox = `${centerLng - 0.5},${centerLat + 0.5},${centerLng + 0.5},${centerLat - 0.5}`;
-
-      // Get city name for fallback search
-      let cityName = jsonResponse.trip.destination || '';
-      if (!cityName) {
-        try {
-          const revUrl = `https://nominatim.openstreetmap.org/reverse?lat=${centerLat}&lon=${centerLng}&format=json`;
-          const revRes = await fetch(revUrl, {
-            headers: {
-              'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
-            }
-          });
-          if (revRes.ok) {
-            const revData = await revRes.json();
-            cityName = revData.address.city || revData.address.town || revData.address.suburb || revData.address.village || '';
-          }
-        } catch (err) {
-          console.error('Failed to reverse geocode mapCenter:', err);
-        }
-      }
-
       for (const day of jsonResponse.trip.days) {
         if (!Array.isArray(day.stops)) continue;
         for (const stop of day.stops) {
           try {
-            const cleanQuery = cleanQueryForGeocoding(stop.name);
-            
-            // 1. Direct Landmark Lookup
-            let landmarkCoords = lookupKnownLandmark(stop.name) || lookupKnownLandmark(cleanQuery);
-            if (landmarkCoords) {
-              stop.lat = landmarkCoords.lat;
-              stop.lng = landmarkCoords.lng;
-              console.log(`[server]: Landmark lookup hit for "${stop.name}" -> [${stop.lat}, ${stop.lng}]`);
-              continue;
-            }
-
-            // 2. Check if AI already provided realistic coordinates within 35km of destination center
+            // 1. If LLM provided valid, non-zero coordinates, trust them!
             if (
               typeof stop.lat === 'number' &&
               typeof stop.lng === 'number' &&
+              !isNaN(stop.lat) &&
+              !isNaN(stop.lng) &&
               stop.lat !== 0 &&
               stop.lng !== 0 &&
-              !isNaN(stop.lat) &&
-              !isNaN(stop.lng)
+              stop.lat >= -90 && stop.lat <= 90 &&
+              stop.lng >= -180 && stop.lng <= 180
             ) {
-              const distFromCenter = haversineKm(centerLat, centerLng, stop.lat, stop.lng);
-              if (distFromCenter <= 35) {
-                continue;
-              }
+              continue;
             }
 
-            const cacheKey = `${cleanQuery.toLowerCase().trim()}_${centerLat.toFixed(3)}_${centerLng.toFixed(3)}`;
+            const cleanQuery = cleanQueryForGeocoding(stop.name);
+            const cacheKey = cleanQuery.toLowerCase().trim();
+
             if (chatGeocodeCache.has(cacheKey)) {
               const coords = chatGeocodeCache.get(cacheKey);
-              stop.lng = coords.lng;
               stop.lat = coords.lat;
+              stop.lng = coords.lng;
               continue;
             }
 
             let coords = null;
 
-            // Attempt 1: Search using clean query bounded by viewbox
-            let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery)}&format=geojson&limit=1&viewbox=${viewbox}&bounded=1`;
+            // Attempt 1: Dynamic Search for exact stop name
+            let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery)}&format=geojson&limit=1`;
             coords = await fetchCoords(url, cleanQuery);
 
-            // Attempt 2: If clean query fails, try clean query + cityName bounded by viewbox
-            if (!coords && cityName) {
-              const queryWithCity = `${cleanQuery}, ${cityName}`;
-              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryWithCity)}&format=geojson&limit=1&viewbox=${viewbox}&bounded=1`;
-              coords = await fetchCoords(url, queryWithCity);
-            }
-
-            // Attempt 3: Unbounded search with cleanQuery + cityName
-            if (!coords && cityName) {
-              const queryWithCity = `${cleanQuery}, ${cityName}`;
-              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryWithCity)}&format=geojson&limit=1`;
-              coords = await fetchCoords(url, queryWithCity);
-            }
-
-            // Attempt 4: Unbounded search for cleanQuery
-            if (!coords) {
-              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery)}&format=geojson&limit=1`;
-              coords = await fetchCoords(url, cleanQuery);
+            // Attempt 2: Search with destination context if available
+            if (!coords && jsonResponse.trip.destination) {
+              const queryWithDest = `${cleanQuery}, ${jsonResponse.trip.destination}`;
+              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryWithDest)}&format=geojson&limit=1`;
+              coords = await fetchCoords(url, queryWithDest);
             }
 
             if (coords) {
-              stop.lng = coords.lng;
               stop.lat = coords.lat;
-              chatGeocodeCache.set(cacheKey, { lng: coords.lng, lat: coords.lat });
+              stop.lng = coords.lng;
+              chatGeocodeCache.set(cacheKey, { lat: coords.lat, lng: coords.lng });
             }
 
-            await new Promise(resolve => setTimeout(resolve, 100)); // Fast rate limit pause
+            await new Promise(resolve => setTimeout(resolve, 100)); // Rate limit pause
           } catch (err) {
-            console.error('Failed to geocode stop:', stop.name, err);
+            console.error('Failed to geocode stop dynamically:', stop.name, err);
           }
 
-          // SANITIZATION: Ensure stop coordinates are valid numbers, fallback to map center if geocoding failed
+          // Fallback check: if geocoding failed and coords are still invalid, set to mapCenter
           if (
-            typeof stop.lat !== 'number' ||
-            isNaN(stop.lat) ||
-            typeof stop.lng !== 'number' ||
-            isNaN(stop.lng) ||
-            stop.lat < -90 ||
-            stop.lat > 90 ||
-            stop.lng < -180 ||
-            stop.lng > 180
+            typeof stop.lat !== 'number' || isNaN(stop.lat) ||
+            typeof stop.lng !== 'number' || isNaN(stop.lng)
           ) {
-            const fallback = lookupKnownLandmark(stop.name, centerLat, centerLng) || { lat: centerLat, lng: centerLng };
-            stop.lat = fallback.lat;
-            stop.lng = fallback.lng;
-            console.log(`[server]: Fallback missing/invalid coordinates for "${stop.name}" -> reset to [${stop.lat}, ${stop.lng}]`);
+            stop.lat = fallbackCenterLat;
+            stop.lng = fallbackCenterLng;
           }
         }
       }
@@ -465,7 +478,7 @@ router.post('/chat', async (req, res) => {
 
     // POST-PROCESSING: Remove extreme outlier stops & reorder stops by geographic nearest-neighbor feasibility
     if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
-      const MAX_DISTANCE_KM = 300; // Allow wide regional / multi-city stops (e.g. up to 300km)
+      const MAX_DISTANCE_KM = isMultiCity ? 5000 : 300; // Allow huge distances for multi-city trips
 
       for (const day of jsonResponse.trip.days) {
         if (!Array.isArray(day.stops) || day.stops.length < 2) continue;
@@ -633,11 +646,44 @@ function lookupKnownLandmark(queryStr, centerLat = null, centerLng = null) {
   if (q.includes('kyoto station') || q.includes('kyoto tower')) return { lat: 34.9858, lng: 135.7588 };
   if (q.includes('ryoan-ji') || q.includes('ryoanji')) return { lat: 35.0344, lng: 135.7182 };
 
-  // ─── Osaka & Hakone Landmarks ───
-  if (q.includes('dotonbori') || q.includes('namba') || q.includes('glico')) return { lat: 34.6687, lng: 135.5013 };
-  if (q.includes('osaka castle') || q.includes('osakajo')) return { lat: 34.6873, lng: 135.5262 };
-  if (q.includes('shinsekai') || q.includes('tsutenkaku')) return { lat: 34.6525, lng: 135.5063 };
-  if (q.includes('fuji') || q.includes('kawaguchiko')) return { lat: 35.4983, lng: 138.7686 };
+  // ─── USA Landmarks ───
+  if (q.includes('statue of liberty')) return { lat: 40.6892, lng: -74.0445 };
+  if (q.includes('times square')) return { lat: 40.7580, lng: -73.9855 };
+  if (q.includes('central park')) return { lat: 40.7829, lng: -73.9654 };
+  if (q.includes('brooklyn bridge')) return { lat: 40.7061, lng: -73.9969 };
+  if (q.includes('metropolitan museum') || q.includes('the met')) return { lat: 40.7794, lng: -73.9632 };
+  if (q.includes('empire state building')) return { lat: 40.7484, lng: -73.9857 };
+  if (q.includes('grand central')) return { lat: 40.7527, lng: -73.9772 };
+
+  if (q.includes('hollywood sign')) return { lat: 34.1341, lng: -118.3215 };
+  if (q.includes('santa monica pier') || q.includes('santa monica')) return { lat: 34.0094, lng: -118.4973 };
+  if (q.includes('griffith observatory') || q.includes('griffith')) return { lat: 34.1184, lng: -118.3004 };
+  if (q.includes('getty center')) return { lat: 34.0780, lng: -118.4741 };
+  if (q.includes('venice beach')) return { lat: 33.9850, lng: -118.4695 };
+  if (q.includes('lacma')) return { lat: 34.0639, lng: -118.3592 };
+
+  if (q.includes('millennium park') || q.includes('cloud gate') || q.includes('the bean')) return { lat: 41.8827, lng: -87.6233 };
+  if (q.includes('art institute of chicago')) return { lat: 41.8796, lng: -87.6237 };
+  if (q.includes('navy pier')) return { lat: 41.8917, lng: -87.6086 };
+  if (q.includes('willis tower') || q.includes('sears tower')) return { lat: 41.8789, lng: -87.6359 };
+  if (q.includes('magnificent mile')) return { lat: 41.8940, lng: -87.6246 };
+
+  if (q.includes('golden gate bridge')) return { lat: 37.8199, lng: -122.4783 };
+  if (q.includes('fisherman\'s wharf') || q.includes('fishermans wharf')) return { lat: 37.8080, lng: -122.4177 };
+  if (q.includes('alcatraz')) return { lat: 37.8270, lng: -122.4230 };
+  if (q.includes('lombard street')) return { lat: 37.8021, lng: -122.4187 };
+
+  if (q.includes('las vegas strip') || q.includes('the strip')) return { lat: 36.1147, lng: -115.1728 };
+  if (q.includes('bellagio fountains') || q.includes('bellagio')) return { lat: 36.1126, lng: -115.1767 };
+  if (q.includes('fremont street')) return { lat: 36.1699, lng: -115.1423 };
+
+  if (q.includes('south beach')) return { lat: 25.7826, lng: -80.1341 };
+  if (q.includes('wynwood walls')) return { lat: 25.8010, lng: -80.1994 };
+
+  if (q.includes('national mall') || q.includes('lincoln memorial')) return { lat: 38.8893, lng: -77.0502 };
+  if (q.includes('white house')) return { lat: 38.8977, lng: -77.0365 };
+  if (q.includes('us capitol') || q.includes('u.s. capitol')) return { lat: 38.8899, lng: -77.0091 };
+
   if (match && typeof centerLat === 'number' && typeof centerLng === 'number') {
     const dist = haversineKm(centerLat, centerLng, match.lat, match.lng);
     if (dist > 250) {
@@ -647,6 +693,384 @@ function lookupKnownLandmark(queryStr, centerLat = null, centerLng = null) {
   }
 
   return match;
+}
+
+// Common country/abbreviation hallucination fixes
+// The LLM sometimes interprets country abbreviations as obscure town names
+// Only catch actual LLM hallucinations (e.g. "Usa River" Tanzania),
+// NOT legitimate country-level requests. The LLM is now prompted to handle
+// country-level trips properly by picking major cities.
+const DESTINATION_HALLUCINATION_MAP = {
+  'usa river': null,  // null means: use extractCityFromUserMessages or let LLM handle it
+  'usa river, tanzania': null,
+  'usa river, arusha': null,
+};
+
+// Detect if this is a multi-city trip by checking user messages, destination, or day centroids
+function detectMultiCityTrip(trip, messages = null) {
+  if (!trip) return false;
+
+  // 1. Check if user prompt requested a multi-city or country-wide trip
+  if (messages && Array.isArray(messages)) {
+    for (const msg of messages) {
+      if (msg.role !== 'user' || !msg.content) continue;
+      const text = msg.content.toLowerCase();
+      if (
+        text.includes('usa') || text.includes('united states') || text.includes('america') ||
+        text.includes('across') || text.includes('whole') || text.includes('multi-city') ||
+        text.includes('coast to coast') || text.includes('road trip')
+      ) {
+        return true;
+      }
+      // Check if user mentioned 2 or more cities
+      const cities = extractAllCitiesFromUserMessages(messages);
+      if (cities.length >= 2) return true;
+    }
+  }
+
+  // 2. Check if destination indicates multi-city/country
+  if (trip.destination) {
+    const destLower = trip.destination.toLowerCase();
+    if (['usa', 'us', 'united states', 'america', 'united states of america'].includes(destLower)) {
+      return true;
+    }
+  }
+  
+  if (!Array.isArray(trip.days)) return false;
+  
+  // 3. Check if different days have stops that are far apart (>100km between day centroids)
+  const dayCentroids = [];
+  for (const day of trip.days) {
+    if (!Array.isArray(day.stops) || day.stops.length === 0) continue;
+    let lat = 0, lng = 0;
+    let validCount = 0;
+    for (const stop of day.stops) {
+      if (typeof stop.lat === 'number' && typeof stop.lng === 'number' && !isNaN(stop.lat) && !isNaN(stop.lng)) {
+        lat += stop.lat;
+        lng += stop.lng;
+        validCount++;
+      }
+    }
+    if (validCount > 0) {
+      dayCentroids.push({ lat: lat / validCount, lng: lng / validCount });
+    }
+  }
+  
+  // If any two day centroids are >100km apart, it's a multi-city trip
+  for (let i = 0; i < dayCentroids.length; i++) {
+    for (let j = i + 1; j < dayCentroids.length; j++) {
+      const dist = haversineKm(dayCentroids[i].lat, dayCentroids[i].lng, dayCentroids[j].lat, dayCentroids[j].lng);
+      if (dist > 100) return true;
+    }
+  }
+  
+  return false;
+}
+
+function fixHallucinatedDestination(destination, messages) {
+  if (!destination) return destination;
+  const destLower = destination.toLowerCase().trim();
+  
+  // Only fix actual hallucinations (e.g. "Usa River" in Tanzania)
+  if (destLower in DESTINATION_HALLUCINATION_MAP) {
+    console.log(`[server]: Detected hallucinated destination: "${destination}"`);
+    // Check if user's messages mention specific cities
+    const userCities = extractAllCitiesFromUserMessages(messages);
+    if (userCities.length > 0) {
+      return userCities[0]; // Use first mentioned city as primary destination
+    }
+    // Fallback: if user said "USA" or "US" etc., default to New York City
+    return 'New York City';
+  }
+  
+  return destination;
+}
+
+function extractCityFromUserMessages(messages) {
+  const cities = extractAllCitiesFromUserMessages(messages);
+  return cities.length > 0 ? cities[0] : null;
+}
+
+function extractAllCitiesFromUserMessages(messages) {
+  if (!messages || !Array.isArray(messages)) return [];
+  
+  // Known major cities to detect from user messages
+  const KNOWN_CITIES = [
+    'New York', 'Los Angeles', 'Chicago', 'San Francisco', 'Las Vegas',
+    'Miami', 'Boston', 'Seattle', 'Washington DC', 'Washington D.C.',
+    'Houston', 'Dallas', 'Denver', 'Phoenix', 'Philadelphia',
+    'London', 'Paris', 'Tokyo', 'Dubai', 'Singapore', 'Bangkok',
+    'Rome', 'Barcelona', 'Amsterdam', 'Berlin', 'Istanbul', 'Sydney',
+    'Mumbai', 'Delhi', 'Kolkata', 'Chennai', 'Bangalore', 'Bengaluru',
+    'Hyderabad', 'Pune', 'Jaipur', 'Goa', 'Manali', 'Shimla',
+    'LA', 'NYC', 'SF', 'DC', 'Colorado', 'Orlando', 'Nashville',
+    'Portland', 'San Diego', 'New Orleans', 'Austin', 'Honolulu'
+  ];
+  
+  const CITY_ABBREVS = { 'LA': 'Los Angeles', 'NYC': 'New York City', 'SF': 'San Francisco', 'DC': 'Washington DC' };
+  const found = [];
+  const seen = new Set();
+  
+  // Check all user messages for city mentions
+  for (const msg of messages) {
+    if (msg.role !== 'user' || !msg.content) continue;
+    const content = msg.content.toLowerCase();
+    for (const city of KNOWN_CITIES) {
+      if (content.includes(city.toLowerCase())) {
+        const resolved = CITY_ABBREVS[city] || city;
+        if (!seen.has(resolved.toLowerCase())) {
+          seen.add(resolved.toLowerCase());
+          found.push(resolved);
+        }
+      }
+    }
+  }
+  
+  return found;
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Extract requested trip duration in days from user messages
+function extractRequestedDays(messages) {
+  if (!messages || !Array.isArray(messages)) return null;
+
+  // Collect ALL candidate day counts and return the highest-priority one
+  let bestDays = null;
+  let bestPriority = -1; // Higher is better
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'user' || !msg.content) continue;
+    const text = msg.content.toLowerCase();
+
+    // Priority 5 (HIGHEST): Explicit "Duration: X days/weeks" field
+    const explicitDuration = text.match(/duration\s*:\s*(?:.*?(\d+)\s*(?:to|-|–)\s*)?\s*(\d+)\s*\+?\s*(day|week)/i);
+    if (explicitDuration && bestPriority < 5) {
+      const num = parseInt(explicitDuration[2], 10);
+      const unit = explicitDuration[3].toLowerCase();
+      bestDays = unit.startsWith('week') ? Math.min(num * 7, 14) : Math.min(num, 14);
+      bestPriority = 5;
+    }
+
+    // Priority 4: "X+ weeks"
+    if (bestPriority < 4) {
+      const weekMatch = text.match(/(\d+)\s*\+?\s*(?:-\s*week|week|weeks|wk|wks)\b/i);
+      if (weekMatch) {
+        const weeks = parseInt(weekMatch[1], 10);
+        if (weeks > 0 && weeks <= 4) {
+          bestDays = Math.min(weeks * 7, 14);
+          bestPriority = 4;
+        }
+      }
+    }
+
+    // Priority 3: "a week" / "one week"
+    if (bestPriority < 3 && /\b(?:a|one)\s+week\b/i.test(text)) {
+      bestDays = 7;
+      bestPriority = 3;
+    }
+
+    // Priority 2: Range "8 to 10 days" / "8-10 days" (use upper bound)
+    if (bestPriority < 2) {
+      const rangeMatch = text.match(/(\d+)\s*(?:-|to|–)\s*(\d+)\s*\+?\s*days?\b/i);
+      if (rangeMatch) {
+        const upper = parseInt(rangeMatch[2], 10);
+        if (upper > 0 && upper <= 30) {
+          bestDays = Math.min(upper, 14);
+          bestPriority = 2;
+        }
+      }
+    }
+
+    // Priority 1 (LOWEST): Standalone "X days" — but SKIP if preceded by "for" (e.g., "LA for 2 days")
+    if (bestPriority < 1) {
+      const allDayMatches = [...text.matchAll(/(?:^|[^a-z])(\d+)\s*\+?\s*(?:-\s*day|day|days)\b/gi)];
+      for (const m of allDayMatches) {
+        const matchIdx = m.index;
+        const precedingText = text.substring(Math.max(0, matchIdx - 10), matchIdx).trim();
+        if (/\bfor\s*$/i.test(precedingText)) continue;
+        const days = parseInt(m[1], 10);
+        if (days > 0 && days <= 30 && (bestDays === null || days > bestDays)) {
+          bestDays = Math.min(days, 14);
+          bestPriority = 1;
+        }
+      }
+    }
+
+    // Priority 0: "weekend"
+    if (bestPriority < 0 && /\bweekend\b/i.test(text)) {
+      bestDays = 2;
+      bestPriority = 0;
+    }
+  }
+
+  return bestDays;
+}
+
+// Enforce requested day count dynamically (extend or truncate without hardcoded templates)
+function enforceRequestedDays(trip, targetDays, centerLat = 35.6895, centerLng = 139.6917, messages = null, isMultiCity = false) {
+  if (!trip || !Array.isArray(trip.days) || !targetDays || targetDays <= 0) return;
+
+  const currentCount = trip.days.length;
+
+  if (currentCount > targetDays) {
+    // Truncate cleanly if LLM generated more days than requested
+    trip.days = trip.days.slice(0, targetDays);
+  } else if (currentCount < targetDays) {
+    // If LLM generated fewer days, dynamically expand days to reach targetDays
+    const DAY_COLOR_PALETTE = ['teal', 'amber', 'violet', 'rose', 'lime'];
+    const destName = trip.destination || 'Destination';
+
+    for (let d = currentCount + 1; d <= targetDays; d++) {
+      const colorHue = DAY_COLOR_PALETTE[(d - 1) % DAY_COLOR_PALETTE.length];
+      let newStops = [];
+
+      if (currentCount > 0) {
+        // For multi-city trips, expand using the last destination day's stops to stay in final city
+        const templateDay = isMultiCity ? trip.days[currentCount - 1] : trip.days[(d - 1) % currentCount];
+        newStops = (templateDay.stops || []).map((s, idx) => ({
+          ...s,
+          id: `s${d}-${idx + 1}`,
+          order: idx + 1
+        }));
+      } else {
+        newStops = [
+          { id: `s${d}-1`, name: `${destName} Exploration Spot - Day ${d}`, order: 1, costEstimate: 25, rationale: `Explore top attractions in ${destName}.` },
+          { id: `s${d}-2`, name: `${destName} Local Sight - Day ${d}`, order: 2, costEstimate: 20, rationale: `Visit famous landmarks in ${destName}.` },
+          { id: `s${d}-3`, name: `${destName} Scenic Viewpoint - Day ${d}`, order: 3, costEstimate: 15, rationale: `Enjoy evening scenery in ${destName}.` }
+        ];
+      }
+
+      trip.days.push({
+        id: `day-${d}`,
+        dayNumber: d,
+        colorHue: colorHue,
+        stops: newStops
+      });
+    }
+  }
+
+  // Update trip metadata dynamically
+  const newDayCount = trip.days.length;
+  if (trip.destination) {
+    const slug = trip.destination.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    trip.id = `trip-${slug}-${newDayCount}d`;
+    if (!trip.title || trip.title.includes('Adventure')) {
+      trip.title = `${trip.destination} ${newDayCount}-Day Exploration`;
+    }
+  }
+}
+
+// Extract budget details from user messages
+function extractUserBudget(messages) {
+  if (!messages || !Array.isArray(messages)) return null;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'user' || !msg.content) continue;
+    const text = msg.content;
+
+    // 1. Range per day: "$80-120 per day", "$50-$80/day", "Budget: $80–120"
+    // Require a $ sign OR the word 'budget' to prevent matching "8 to 10 days"
+    const dailyRangeMatch = text.match(/(?:\$|budget.*?)(\d+)\s*(?:[–-]|to)\s*\$?(\d+)\s*(?:\/|\s*per|\s*a)?\s*(?:day|daily)?/i);
+    if (dailyRangeMatch) {
+      // Avoid matching "8 to 10 days" if it happens to be caught by 'budget' prefix but has 'days' suffix
+      const contextStr = text.substring(dailyRangeMatch.index, dailyRangeMatch.index + 20).toLowerCase();
+      if (!contextStr.includes('day') && contextStr.includes('days')) {
+         // Skip, it's talking about a day range not budget range
+      } else {
+        const min = parseInt(dailyRangeMatch[1], 10);
+        const max = parseInt(dailyRangeMatch[2], 10);
+        if (min > 0 && max > min && max <= 5000) {
+          const avgDaily = Math.round((min + max) / 2);
+          return { isDaily: true, dailyRate: avgDaily, minRate: min, maxRate: max };
+        }
+      }
+    }
+
+    // 2. Single rate per day: "$100/day", "$80 per day", "$150 a day", "daily budget: $80"
+    const singleDailyMatch = text.match(/(?:daily\s+budget|budget)?\s*\$?(\d+)\s*(?:\/|\s*per|\s*a)\s*day/i);
+    if (singleDailyMatch) {
+      const rate = parseInt(singleDailyMatch[1], 10);
+      if (rate > 0 && rate <= 10000) {
+        return { isDaily: true, dailyRate: rate, minRate: rate, maxRate: rate };
+      }
+    }
+
+    // 3. Explicit total budget: "budget of $1500", "total budget: $2000", "budget $2000"
+    const totalMatch = text.match(/(?:total\s+budget|budget\s+of|budget:?\s*\$?)\s*\$?(\d+)\b/i);
+    if (totalMatch) {
+      const total = parseInt(totalMatch[1], 10);
+      if (total > 50) {
+        return { isDaily: false, totalBudget: total };
+      }
+    }
+  }
+
+  return null;
+}
+
+// Calculate total budget and sync budget items appropriately
+function calculateAndEnforceTripBudget(trip, messages) {
+  if (!trip || !Array.isArray(trip.days) || trip.days.length === 0) return;
+
+  const totalDays = trip.days.length;
+  const userBudget = extractUserBudget(messages);
+
+  let targetTotalBudget = 0;
+  let dailyRate = 100; // default USD daily rate
+
+  if (userBudget) {
+    if (userBudget.isDaily) {
+      dailyRate = userBudget.dailyRate;
+      targetTotalBudget = dailyRate * totalDays;
+    } else if (userBudget.totalBudget) {
+      targetTotalBudget = userBudget.totalBudget;
+      dailyRate = Math.round(targetTotalBudget / totalDays);
+    }
+  } else {
+    // If user didn't specify budget, check if LLM returned a daily rate in trip.budget by mistake (< 200 for multi-day)
+    if (typeof trip.budget === 'number' && trip.budget > 0 && trip.budget < 200 && totalDays > 1) {
+      dailyRate = trip.budget;
+      targetTotalBudget = dailyRate * totalDays;
+    } else if (typeof trip.budget === 'number' && trip.budget >= 200) {
+      targetTotalBudget = trip.budget;
+      dailyRate = Math.round(targetTotalBudget / totalDays);
+    } else {
+      dailyRate = 100;
+      targetTotalBudget = dailyRate * totalDays;
+    }
+  }
+
+  // Ensure trip.budget is set to the calculated total budget
+  trip.budget = targetTotalBudget;
+
+  // Calculate sum of activity costEstimates across all stops
+  let activityTotal = 0;
+  trip.days.forEach(day => {
+    (day.stops || []).forEach(stop => {
+      activityTotal += Number(stop.costEstimate) || 0;
+    });
+  });
+
+  // Calculate proportioned budget items so sum(budgetItems) <= trip.budget
+  // 45% Accommodation, 30% Food & dining, Activity entries, remaining for Transport
+  const accomAmount = Math.round(targetTotalBudget * 0.45);
+  const foodAmount = Math.round(targetTotalBudget * 0.30);
+  const activityAmount = activityTotal > 0 ? activityTotal : Math.round(targetTotalBudget * 0.15);
+  const transportAmount = Math.max(0, targetTotalBudget - (accomAmount + foodAmount + activityAmount));
+
+  trip.budgetItems = [
+    { name: `Accommodation (${totalDays} night${totalDays > 1 ? 's' : ''})`, amount: accomAmount, color: '#2dd4bf' },
+    { name: 'Food & dining', amount: foodAmount, color: '#f59e0b' },
+    { name: 'Activity entries', amount: activityAmount, color: '#f43f5e' },
+    { name: 'Local transport', amount: transportAmount, color: '#84cc16' }
+  ];
+
+  console.log(`[server]: Enforced trip budget for ${totalDays} days -> Total Budget: $${trip.budget} ($${dailyRate}/day). Total Spend: $${accomAmount + foodAmount + activityAmount + transportAmount}`);
 }
 
 // Clean query strings to improve OSM geocoding hits

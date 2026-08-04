@@ -48,3 +48,5 @@ TODO.md
 UI_DESIGN.md
 ARCHITECTURE.md 
 CLAUDE.md
+backend/test-dynamic-prompt.js
+backend/test-sequence-prompt.js
