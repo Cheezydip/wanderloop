@@ -42,7 +42,19 @@ const PORT = process.env.PORT || 3001;
 // CORS setup
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? false
+    ? (origin, callback) => {
+        // Allow requests with no origin (like mobile apps, curl, or server-to-server)
+        if (!origin) return callback(null, true);
+        if (
+          origin.endsWith('.vercel.app') ||
+          origin.endsWith('.onrender.com') ||
+          origin.includes('localhost') ||
+          (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL)
+        ) {
+          return callback(null, true);
+        }
+        return callback(null, true);
+      }
     : ['http://localhost:5173', 'http://127.0.0.1:5173'],
   credentials: true,
 };
