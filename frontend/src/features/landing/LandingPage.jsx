@@ -10,6 +10,8 @@ import TopographicMap from './TopographicMap';
 import FlightNetwork from './FlightNetwork';
 import IsometricGrid from './IsometricGrid';
 import ParticleCTA from './ParticleCTA';
+import PrecisionTravelSuite from './PrecisionTravelSuite';
+import ActiveTripDashboard from './ActiveTripDashboard';
 import useScrollReveal, { useStaggerReveal } from './useScrollReveal';
 import useCountUp from './useCountUp';
 import useTypewriter from './useTypewriter';
@@ -99,6 +101,13 @@ function useAnimeHero(sectionsLoaded) {
         duration: 800,
         ease: spring({ stiffness: 80, damping: 10 }),
       }, '-=700')
+      // Dashboard — fade and slide up
+      .add('.atd-grid', {
+        translateY: [30, 0],
+        opacity: [0, 1],
+        duration: 800,
+        ease: spring({ stiffness: 70, damping: 10 }),
+      }, '-=600')
       // Search bar — scale up with glow
       .add('.landing-hero-search', {
         translateY: [20, 0],
@@ -491,7 +500,8 @@ export default function LandingPage() {
   const { theme } = useTheme();
   const { dispatch } = useTrip();
   const { user, logout, openAuthModal } = useAuth();
-  const [inputValue, setInputValue] = useState('');
+  const [placeValue, setPlaceValue] = useState('');
+  const [datesValue, setDatesValue] = useState('');
   const [navScrolled, setNavScrolled] = useState(false);
   const [sectionsLoaded, setSectionsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -499,19 +509,40 @@ export default function LandingPage() {
   const [isSavedTripsOpen, setIsSavedTripsOpen] = useState(false);
   const [loaderMessage, setLoaderMessage] = useState('initializing itinerary engine...');
   const [loaderProgress, setLoaderProgress] = useState(0);
-  const [inputFocused, setInputFocused] = useState(false);
+
+  const handleDashboardClick = (trip) => {
+    if (trip.isSavedTrip && trip.originalData) {
+      dispatch({
+        type: 'RESTORE_TRIP',
+        payload: {
+          trip: {
+            id: trip.originalData.tripId,
+            title: trip.originalData.title || 'Saved Itinerary',
+            budget: trip.originalData.budget || 25000,
+            currency: trip.originalData.currency || 'JPY',
+            days: trip.originalData.days || [],
+            messages: trip.originalData.messages || [],
+          },
+          hasTrip: true,
+          selectedHomestaysByDay: trip.originalData.selectedHomestaysByDay || {},
+          selectedHomestayId: trip.originalData.selectedHomestayId || null,
+          budgetItems: trip.originalData.budgetItems || [],
+        },
+      });
+      const suite = document.getElementById('precision-travel-suite');
+      if (suite) suite.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      setPlaceValue(trip.name);
+      const hero = document.getElementById('landing-hero-input');
+      if (hero) {
+        hero.focus();
+        hero.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  };
 
   const bentoRef = useRef(null);
-  const heroTextareaRef = useRef(null);
   const scrollContainerRef = useRef(null);
-
-  const placeholderStrings = useMemo(() => [
-    '5 days in Japan, love street food, budget $80/day...',
-    'Weekend in Paris, first time, want art and cafes...',
-    '2 weeks backpacking Southeast Asia, $50/day...',
-    'Family trip to Costa Rica, 7 days, kid-friendly...',
-  ], []);
-  const { displayText: typewriterText, cursorVisible } = useTypewriter(placeholderStrings, { typeSpeed: 50, deleteSpeed: 30, pauseAfterType: 2500 });
 
   // Parallax scroll tracking
   useParallax(scrollContainerRef);
@@ -519,13 +550,7 @@ export default function LandingPage() {
   // Magnetic button for CTA
   const magneticCTA = useMagneticButton(0.25);
 
-  // Auto-expand hero textarea
-  useEffect(() => {
-    if (heroTextareaRef.current) {
-      heroTextareaRef.current.style.height = 'auto';
-      heroTextareaRef.current.style.height = `${Math.min(Math.max(heroTextareaRef.current.scrollHeight, 58), 240)}px`;
-    }
-  }, [inputValue]);
+  // Auto-expand hero textarea (removed)
 
   /* Anime.js orchestrations */
   useAnimeHero(sectionsLoaded);
@@ -634,7 +659,7 @@ export default function LandingPage() {
 
   /* Submit */
   function handleSubmit(promptOverride) {
-    const text = promptOverride || inputValue;
+    const text = promptOverride || (placeValue && datesValue ? `Trip to ${placeValue} on ${datesValue}` : placeValue);
     if (!text.trim()) return;
     dispatch({ type: 'START_QUESTIONNAIRE', payload: text });
   }
@@ -827,113 +852,82 @@ export default function LandingPage() {
       </nav>
 
       {/* ═══ HERO ═══ */}
-      <section className="landing-hero" id="landing-hero">
-        <IsometricGrid theme={theme} loading={isLoading} />
-
-        {/* Aurora blobs — parallax layer */}
-        <div className="landing-hero-aurora landing-parallax-slow">
+      <section className="landing-hero" id="landing-hero" style={{ minHeight: 'auto', paddingTop: '80px', paddingBottom: '40px' }}>
+        {/* Aurora blobs — background layer */}
+        <div className="landing-hero-aurora">
           <div className="landing-aurora-blob" />
           <div className="landing-aurora-blob" />
           <div className="landing-aurora-blob" />
           <div className="landing-aurora-blob" />
         </div>
-
-        {/* Grid floor — parallax layer */}
-        <div className="landing-hero-grid landing-parallax-medium" />
-
-        {/* Floating destination cards */}
-        {floatingCards.map((card, i) => (
-          <div
-            key={i}
-            className="landing-floating-card"
-            style={{ ...card.pos, animationDelay: `${card.delay}s` }}
-          >
-            <span className="landing-floating-emoji">{card.emoji}</span>
-            <div>
-              <div className="landing-floating-city">{card.city}</div>
-              <div className="landing-floating-days">{card.days}</div>
-            </div>
-          </div>
-        ))}
 
         {/* Hero content */}
-        <div className="landing-hero-content landing-parallax-fast">
-          <div className="landing-hero-badge">
-            <span className="landing-badge-icon"><CheckIcon /></span>
-            AI-powered travel planning
-            <span className="landing-badge-pulse" />
-          </div>
+        <div className="w-full max-w-7xl mx-auto px-4 relative z-10">
 
-          <h1 className="landing-hero-title">
-            <span className="word">Travel</span>{' '}
-            <span className="word">plans</span>{' '}
-            <span className="word">that</span>
-            <br />
-            <span className="word landing-hero-gradient">build</span>{' '}
-            <span className="word landing-hero-gradient">themselves</span>
-          </h1>
-
-          <p className="landing-hero-sub">
-            Tell the AI where you want to go. It interviews you, builds a day-by-day
-            itinerary on a live map, and finds route-aware homestays — all in seconds.
-          </p>
-
+          {/* Featured Active Trip Dashboard directly in Hero */}
+          <ActiveTripDashboard onTripClick={handleDashboardClick} />
+          
           {/* Search bar */}
-          <form className="landing-hero-search" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-            <span className="landing-search-icon">
-              <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-                <circle cx="9" cy="9" r="6" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M14 14l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </span>
-            <textarea
-              id="landing-hero-input"
-              ref={heroTextareaRef}
-              rows={1}
-              className="landing-search-input"
-              placeholder=""
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onFocus={() => setInputFocused(true)}
-              onBlur={() => setInputFocused(false)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
-              }}
-              aria-label="Describe your trip"
-            />
-            {/* Typewriter overlay (hidden when input has value or is focused) */}
-            {!inputValue && !inputFocused && (
-              <div className="landing-typewriter-overlay" onClick={() => heroTextareaRef.current?.focus()}>
-                <span>{typewriterText}</span>
-                <span className={`landing-typewriter-cursor ${cursorVisible ? '' : 'blink-off'}`}>|</span>
+          <form className="landing-hero-search" style={{ marginTop: '24px' }} onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+            <div className="landing-search-split-bar">
+              {/* Destination Segment */}
+              <div className="landing-search-segment">
+                <span className="landing-segment-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                </span>
+                <div className="landing-segment-content">
+                  <span className="landing-segment-label">Where to?</span>
+                  <input
+                    id="landing-hero-input"
+                    type="text"
+                    className="landing-segment-input"
+                    placeholder="e.g. Tokyo, Paris, Bali..."
+                    value={placeValue}
+                    onChange={(e) => setPlaceValue(e.target.value)}
+                    aria-label="Destination"
+                  />
+                </div>
               </div>
-            )}
-            <button type="submit" className="landing-search-btn" disabled={!inputValue.trim()} aria-label="Start planning">
-              <ArrowRight size={14} />
-            </button>
+
+              <div className="landing-search-divider" />
+
+              {/* Dates Segment */}
+              <div className="landing-search-segment">
+                <span className="landing-segment-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                </span>
+                <div className="landing-segment-content">
+                  <span className="landing-segment-label">Start Date</span>
+                  <input
+                    type="date"
+                    className="landing-segment-input"
+                    value={datesValue}
+                    onChange={(e) => setDatesValue(e.target.value)}
+                    aria-label="Start Date"
+                  />
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                className="landing-search-submit-btn"
+                disabled={!placeValue.trim() || !datesValue.trim()}
+                aria-label="Start planning"
+              >
+                <ArrowRight size={18} />
+              </button>
+            </div>
           </form>
 
-          {/* Prompt chips */}
-          <div className="landing-hero-chips">
-            {promptChips.map((chip, idx) => (
-              <button key={idx} className="landing-chip" onClick={() => handleSubmit(chip.prompt)}>
-                {chip.text}
-              </button>
-            ))}
-          </div>
-
-          {/* Stats */}
-          <div className="landing-hero-stats">
-            <StatCard target={12847} label="Trips planned" />
-            <StatCard target={94} label="% Recommend" suffix="%" />
-            <StatCard target={43} label="Countries" />
-          </div>
-        </div>
-
-        {/* Scroll indicator */}
-        <div className="landing-scroll-indicator">
-          <ChevronDown />
-          <ChevronDown />
         </div>
       </section>
 
@@ -966,6 +960,9 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* ═══ PRECISION TRAVEL SUITE ═══ */}
+      <PrecisionTravelSuite />
 
       {/* ═══ HOW IT WORKS ═══ */}
       <section className="landing-section" id="landing-how" style={{ background: 'var(--surface)' }}>

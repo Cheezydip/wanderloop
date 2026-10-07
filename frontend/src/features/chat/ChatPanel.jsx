@@ -20,7 +20,7 @@ const INTERVIEW_FLOW = [
   },
   {
     ai: "What's your daily budget? Include lodging, food, and activities.",
-    chips: ["$30–50 (budget)", "$50–80 (moderate)", "$80–120 (comfort)", "$120+ (luxury)"],
+    chips: ["Budget friendly", "Moderate", "Comfort", "Luxury"],
     key: "budget"
   },
   {

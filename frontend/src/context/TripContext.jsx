@@ -1,20 +1,104 @@
 import { createContext, useContext, useReducer, useEffect } from 'react';
+import { haversine } from '../utils/haversine';
 import { mockTrip, mockHomestays, mockKyotoTrip, mockOsakaTrip, mockHakoneTrip } from '../data/mockTrip';
 import { getTripCurrency, getDefaultBudgetLimit } from '../utils/currency';
 
 const TRIP_STORAGE_KEY = 'wanderloop_active_trip';
 const SESSION_ACTIVE_KEY = 'wanderloop_session_active';
 
+function haversineKm(lat1, lon1, lat2, lon2) {
+  if (typeof lat1 !== 'number' || typeof lon1 !== 'number' || typeof lat2 !== 'number' || typeof lon2 !== 'number') return Infinity;
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function sanitizeTripStopsDistance(trip) {
+  if (!trip || !Array.isArray(trip.days)) return trip;
+
+  let modified = false;
+  const seenStops = [];
+
+  const updatedDays = trip.days.map(day => {
+    if (!Array.isArray(day.stops)) return day;
+
+    const uniqueStops = [];
+    for (const stop of day.stops) {
+      if (!stop || !stop.name) continue;
+      const sName = stop.name.toLowerCase().trim();
+      const normName = sName.replace(/^(the|a|an)\s+/i, '').replace(/[^\w\s]/g, '').trim();
+
+      const isDup = seenStops.some(prev => {
+        const pName = prev.name.toLowerCase().trim();
+        const pNorm = pName.replace(/^(the|a|an)\s+/i, '').replace(/[^\w\s]/g, '').trim();
+        if (sName === pName || (normName.length >= 4 && normName === pNorm)) return true;
+        if (typeof stop.lat === 'number' && typeof stop.lng === 'number' &&
+            typeof prev.lat === 'number' && typeof prev.lng === 'number' &&
+            stop.lat !== 0 && stop.lng !== 0 && prev.lat !== 0 && prev.lng !== 0) {
+          const dist = haversineKm(stop.lat, stop.lng, prev.lat, prev.lng);
+          if (dist < 0.08) return true;
+        }
+        return false;
+      });
+
+      if (!isDup) {
+        seenStops.push(stop);
+        uniqueStops.push(stop);
+      } else {
+        modified = true;
+      }
+    }
+
+    const adjustedStops = uniqueStops.map((stop, idx) => {
+      let newStop = { ...stop, order: idx + 1 };
+      
+      if (stop.name && typeof stop.name === 'string') {
+        const sName = stop.name.toLowerCase().trim();
+        if (sName.includes('fish road') || sName.includes('fish market') || sName.includes('heritage cafe')) {
+          if (Math.abs((parseFloat(stop.lat) || 0) - 55.9496) > 0.005 || Math.abs((parseFloat(stop.lng) || 0) - (-3.1891)) > 0.005) {
+            modified = true;
+            newStop.lat = 55.9496;
+            newStop.lng = -3.1891;
+          }
+        } else if (sName.includes('national museum')) {
+          if (Math.abs((parseFloat(stop.lat) || 0) - 55.9469) > 0.005 || Math.abs((parseFloat(stop.lng) || 0) - (-3.1906)) > 0.005) {
+            modified = true;
+            newStop.lat = 55.9469;
+            newStop.lng = -3.1906;
+          }
+        }
+      }
+      return newStop;
+    });
+
+    return {
+      ...day,
+      stops: adjustedStops
+    };
+  });
+
+  if (modified) {
+    return { ...trip, days: updatedDays };
+  }
+
+  return trip;
+}
+
 function loadInitialState(defaultState) {
   try {
-    const isSessionActive = sessionStorage.getItem(SESSION_ACTIVE_KEY) === 'true';
     const saved = localStorage.getItem(TRIP_STORAGE_KEY);
-    if (isSessionActive && saved) {
+    if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed && parsed.hasTrip && parsed.trip) {
+        const sanitizedTrip = sanitizeTripStopsDistance(parsed.trip);
         return {
           ...defaultState,
           ...parsed,
+          trip: sanitizedTrip,
           isGenerating: false,
           loadingPOIs: false,
           hoveredHomestayId: null,
@@ -198,9 +282,10 @@ function tripReducer(state, action) {
       };
 
     case 'SET_TRIP': {
+      const sanitizedPayload = sanitizeTripStopsDistance(action.payload);
       const newTrip = {
-        ...action.payload,
-        messages: action.payload.messages || state.trip?.messages || []
+        ...sanitizedPayload,
+        messages: sanitizedPayload.messages || state.trip?.messages || []
       };
       const newItems = syncBudgetItems(newTrip, state.homestays, state.selectedHomestaysByDay, state.selectedHomestayId);
       const computedTotal = newItems.reduce((acc, i) => acc + i.amount, 0);
@@ -227,6 +312,70 @@ function tripReducer(state, action) {
       };
     }
       
+    case 'ADD_DAY': {
+      if (!state.trip) return state;
+      const DAY_COLOR_PALETTE = ['#f43f5e', '#ec4899', '#d946ef', '#a855f7', '#8b5cf6', '#6366f1', '#3b82f6', '#0ea5e9'];
+      
+      const newDaysList = [...(state.trip.days || [])];
+      const insertAfterId = action.payload?.insertAfterId;
+      
+      let insertIndex = newDaysList.length;
+      if (insertAfterId) {
+        const foundIndex = newDaysList.findIndex(d => d.id === insertAfterId);
+        if (foundIndex !== -1) {
+          insertIndex = foundIndex + 1;
+        }
+      }
+      
+      const blankDay = {
+        id: `day-manual-${Date.now()}`,
+        stops: []
+      };
+      
+      newDaysList.splice(insertIndex, 0, blankDay);
+      
+      const reindexedDays = newDaysList.map((d, index) => ({
+        ...d,
+        dayNumber: index + 1,
+        colorHue: DAY_COLOR_PALETTE[index % DAY_COLOR_PALETTE.length]
+      }));
+
+      return {
+        ...state,
+        trip: {
+          ...state.trip,
+          days: reindexedDays
+        }
+      };
+    }
+
+    case 'REMOVE_DAY': {
+      if (!state.trip || !state.trip.days) return state;
+      const dayIdToRemove = action.payload;
+      const newDays = state.trip.days.filter(d => d.id !== dayIdToRemove);
+      
+      // Re-index remaining days (keep original id to preserve routes)
+      const reindexedDays = newDays.map((d, index) => ({
+        ...d,
+        dayNumber: index + 1
+      }));
+      
+      // Clear route data for removed day
+      const updatedRoutes = { ...state.routesData };
+      delete updatedRoutes[dayIdToRemove];
+
+      return {
+        ...state,
+        trip: {
+          ...state.trip,
+          days: reindexedDays
+        },
+        routesData: updatedRoutes,
+        highlightedDayId: state.highlightedDayId === dayIdToRemove ? null : state.highlightedDayId,
+        toast: { type: 'info', message: 'Day removed.' }
+      };
+    }
+
     case 'ADD_STOP': {
       const updatedDays = state.trip.days.map((day) => {
         if (day.id === action.payload.dayId) {
@@ -501,7 +650,7 @@ function tripReducer(state, action) {
           if (saved) {
             const parsed = JSON.parse(saved);
             if (parsed && parsed.trip) {
-              currentTrip = parsed.trip;
+              currentTrip = sanitizeTripStopsDistance(parsed.trip);
               selectedHomestaysByDay = parsed.selectedHomestaysByDay || {};
               selectedHomestayId = parsed.selectedHomestayId || null;
               budgetItems = parsed.budgetItems || syncBudgetItems(currentTrip, [], selectedHomestaysByDay, selectedHomestayId);
@@ -517,7 +666,7 @@ function tripReducer(state, action) {
 
       return {
         ...state,
-        trip: currentTrip,
+        trip: sanitizeTripStopsDistance(currentTrip),
         hasTrip: true,
         showQuestionnaire: false,
         selectedHomestaysByDay: selectedHomestaysByDay || {},
@@ -551,7 +700,7 @@ function tripReducer(state, action) {
       };
 
     case 'RESTORE_TRIP': {
-      const loadedTrip = action.payload.trip;
+      const loadedTrip = sanitizeTripStopsDistance(action.payload.trip);
       const selectedHomestaysByDay = action.payload.selectedHomestaysByDay || {};
       const selectedHomestayId = action.payload.selectedHomestayId || null;
       const budgetItems = action.payload.budgetItems || syncBudgetItems(loadedTrip, state.homestays, selectedHomestaysByDay, selectedHomestayId);

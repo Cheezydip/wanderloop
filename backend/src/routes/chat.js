@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { geocodeLocation, lookupKnownLandmark } from '../utils/geocoder.js';
+import { geocodeRealStop, fetchRealAttractionsForCity } from '../utils/realPlacesScout.js';
 
 const router = Router();
 const chatGeocodeCache = new Map();
@@ -134,12 +136,726 @@ IMPORTANT: Always close all JSON brackets properly. Never cut off the response m
 
 
 
+const WORD_TO_NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, an: 1, another: 1 };
+
+function normalizeStopName(name) {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/^(the|a|an)\s+/i, '')
+    .replace(/\s+(in|at|near|of)\s+.*$/i, '')
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isDuplicateStop(stopA, stopB) {
+  if (!stopA || !stopB) return false;
+  const nameA = (stopA.name || '').toLowerCase().trim();
+  const nameB = (stopB.name || '').toLowerCase().trim();
+  if (!nameA || !nameB) return false;
+
+  if (nameA === nameB) return true;
+
+  const normA = normalizeStopName(nameA);
+  const normB = normalizeStopName(nameB);
+  if (normA && normB && normA === normB) return true;
+
+  if (normA.length >= 5 && normB.length >= 5) {
+    if (normA.includes(normB) || normB.includes(normA)) return true;
+  }
+
+  if (typeof stopA.lat === 'number' && typeof stopA.lng === 'number' &&
+      typeof stopB.lat === 'number' && typeof stopB.lng === 'number' &&
+      stopA.lat !== 0 && stopA.lng !== 0 && stopB.lat !== 0 && stopB.lng !== 0) {
+    const dist = haversineKm(stopA.lat, stopA.lng, stopB.lat, stopB.lng);
+    if (dist < 0.1) {
+      const firstA = normA.split(' ')[0];
+      const firstB = normB.split(' ')[0];
+      if (firstA === firstB || stopA.category === stopB.category) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function deduplicateTripStops(trip) {
+  if (!trip || !Array.isArray(trip.days)) return trip;
+  const seenStops = [];
+
+  for (const day of trip.days) {
+    if (!Array.isArray(day.stops)) continue;
+    const uniqueStops = [];
+
+    for (const stop of day.stops) {
+      const isDup = seenStops.some(existing => isDuplicateStop(stop, existing));
+      if (!isDup) {
+        seenStops.push(stop);
+        uniqueStops.push(stop);
+      } else {
+        console.log(`[server]: Deduplication: Removed duplicate stop "${stop.name}" from Day ${day.dayNumber || day.id}`);
+      }
+    }
+    day.stops = uniqueStops;
+  }
+
+  reindexTripDaysAndStops(trip);
+  return trip;
+}
+
+const DAY_COLOR_PALETTE = ['teal', 'amber', 'violet', 'rose', 'lime', 'cyan', 'orange', 'purple', 'pink', 'emerald'];
+const TIME_SLOTS = [
+  '09:00 AM - 11:00 AM',
+  '11:30 AM - 01:30 PM',
+  '02:30 PM - 04:30 PM',
+  '05:00 PM - 07:00 PM',
+  '07:30 PM - 09:30 PM',
+  '10:00 PM - 11:30 PM'
+];
+
+function reindexTripDaysAndStops(trip) {
+  if (!trip || !Array.isArray(trip.days)) return;
+
+  trip.days.forEach((day, dIdx) => {
+    const dayNum = dIdx + 1;
+    day.dayNumber = dayNum;
+    day.id = `day-${dayNum}`;
+    day.colorHue = DAY_COLOR_PALETTE[dIdx % DAY_COLOR_PALETTE.length];
+    if (Array.isArray(day.stops)) {
+      day.stops.forEach((stop, sIdx) => {
+        stop.order = sIdx + 1;
+        stop.id = `s${dayNum}-${sIdx + 1}`;
+        if (!stop.timeEstimate || stop.timeEstimate.includes('undefined')) {
+          stop.timeEstimate = TIME_SLOTS[Math.min(sIdx, TIME_SLOTS.length - 1)];
+        }
+      });
+    }
+  });
+}
+
+function clusterAttractionsForDays(attractions, numDays, stopsPerDay = 4) {
+  const clusteredDays = [];
+  let remaining = [...attractions];
+  
+  for (let d = 0; d < numDays; d++) {
+    if (remaining.length === 0) break;
+    const seed = remaining.shift();
+    const currentCluster = [seed];
+    
+    while (currentCluster.length < stopsPerDay && remaining.length > 0) {
+      remaining.sort((a, b) => haversineKm(seed.lat, seed.lng, a.lat, a.lng) - haversineKm(seed.lat, seed.lng, b.lat, b.lng));
+      currentCluster.push(remaining.shift());
+    }
+    clusteredDays.push(currentCluster);
+  }
+  
+  while (clusteredDays.length < numDays) {
+    clusteredDays.push([]);
+  }
+  
+  return clusteredDays;
+}
+
+function assignStopsToNearestDays(orphanStops, remainingDays) {
+  if (!Array.isArray(orphanStops) || orphanStops.length === 0 || !Array.isArray(remainingDays) || remainingDays.length === 0) {
+    return;
+  }
+
+  for (const orphan of orphanStops) {
+    // 1. Deduplication check: check if already exists in any remaining day
+    const alreadyExists = remainingDays.some(d =>
+      (d.stops || []).some(s => isDuplicateStop(orphan, s))
+    );
+    if (alreadyExists) {
+      console.log(`[server]: Proximity assignment: Skipping duplicate orphan "${orphan.name}"`);
+      continue;
+    }
+
+    // 2. Proximity calculation
+    let bestDay = null;
+    let minScore = Infinity;
+
+    const hasValidCoords = typeof orphan.lat === 'number' && typeof orphan.lng === 'number' && orphan.lat !== 0 && orphan.lng !== 0;
+
+    if (hasValidCoords) {
+      for (const day of remainingDays) {
+        const validStops = (day.stops || []).filter(s => typeof s.lat === 'number' && typeof s.lng === 'number' && s.lat !== 0 && s.lng !== 0);
+        if (validStops.length === 0) {
+          const score = 50 + (day.stops?.length || 0) * 10;
+          if (score < minScore) {
+            minScore = score;
+            bestDay = day;
+          }
+          continue;
+        }
+
+        const distances = validStops.map(s => haversineKm(orphan.lat, orphan.lng, s.lat, s.lng));
+        const minDist = Math.min(...distances);
+        const avgDist = distances.reduce((a, b) => a + b, 0) / distances.length;
+        const capacityPenalty = Math.max(0, ((day.stops?.length || 0) - 3) * 0.8);
+        const score = (minDist * 0.7) + (avgDist * 0.3) + capacityPenalty;
+
+        if (score < minScore) {
+          minScore = score;
+          bestDay = day;
+        }
+      }
+    } else {
+      let minStops = Infinity;
+      for (const day of remainingDays) {
+        const count = day.stops?.length || 0;
+        if (count < minStops) {
+          minStops = count;
+          bestDay = day;
+        }
+      }
+    }
+
+    if (!bestDay) {
+      bestDay = remainingDays[0];
+    }
+
+    if (!Array.isArray(bestDay.stops)) bestDay.stops = [];
+    bestDay.stops.push(orphan);
+
+    const coordsCount = bestDay.stops.filter(s => typeof s.lat === 'number' && typeof s.lng === 'number' && s.lat !== 0 && s.lng !== 0).length;
+    if (coordsCount >= 2) {
+      bestDay.stops = optimizeDayStopsRoute(bestDay.stops);
+    }
+  }
+
+  reindexTripDaysAndStops({ days: remainingDays });
+}
+
+function parseTripModificationIntent(userPrompt) {
+  const p = userPrompt.toLowerCase().trim();
+
+  // 1. EXTEND_TO_CITY: "add 2 days to Amsterdam", "extend to Rome for 3 days", "also visit London"
+  const extendCityMatch = p.match(/(?:add|include|extend|also\s+visit|then\s+go\s+to|also\s+go\s+to|continue\s+to)\s+(?:(\d+|one|two|three|four|five)\s+(?:more\s+)?days?\s+(?:to|in|for|at)\s+)([a-zA-Z][a-zA-Z\s]{1,40})/i)
+    || p.match(/(?:add|include|extend|also\s+visit|then\s+go\s+to|also\s+go\s+to|continue\s+to)\s+(?:(?:a|some|few)\s+)?(?:days?\s+(?:to|in|for|at)\s+)([a-zA-Z][a-zA-Z\s]{1,40})/i)
+    || p.match(/(?:extend|continue)\s+(?:the\s+)?(?:trip\s+)?(?:to|with|into)\s+([a-zA-Z][a-zA-Z\s]{1,40})(?:\s+for\s+(\d+|one|two|three|four|five)\s+days?)?/i)
+    || p.match(/(?:add|include)\s+([a-zA-Z][a-zA-Z\s]{1,40})\s+(?:for|with)\s+(\d+|one|two|three|four|five)\s+days?/i)
+    || p.match(/(?:also|then)\s+(?:visit|go\s+to|explore|head\s+to)\s+([a-zA-Z][a-zA-Z\s]{1,40})(?:\s+for\s+(\d+|one|two|three|four|five)\s+days?)?/i);
+
+  if (extendCityMatch) {
+    let cityName = null;
+    let dayCount = 2;
+    const WORD_MAP = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+    const groups = Array.from(extendCityMatch).slice(1).filter(Boolean);
+    for (const g of groups) {
+      const cleaned = g.trim();
+      if (/^\d+$/.test(cleaned)) dayCount = parseInt(cleaned);
+      else if (WORD_MAP[cleaned.toLowerCase()]) dayCount = WORD_MAP[cleaned.toLowerCase()];
+      else if (/^[a-zA-Z\s]+$/.test(cleaned) && cleaned.length > 1) cityName = cleaned.trim();
+    }
+    if (cityName) {
+      cityName = cityName.replace(/\s+(for|with|to|in|at)\s*$/i, '').trim();
+      return { intent: 'EXTEND_TO_CITY', newCity: cityName, extendDays: Math.min(Math.max(dayCount, 1), 7) };
+    }
+  }
+
+  // 2. DELETE_DAY_AND_REDISTRIBUTE: "remove day 2 and add its stops to other days"
+  const deleteDayAndRedistributeMatch = p.match(/(?:remove|delete|drop|cut)\s+(?:the\s+)?day\s*(\d+|one|two|three|four|five|six|seven|first|second|third|fourth|fifth|last).*?(?:add|distribute|move|put|assign|spread|merge|shift|keep).*?(?:stops?|places?|activities?|attractions?)/i)
+    || p.match(/(?:add|distribute|move|put|assign|spread|merge|shift|keep).*?(?:stops?|places?|activities?|attractions?).*?(?:from|of|on)\s+(?:the\s+)?(?:deleted|removed)?\s*day\s*(\d+|one|two|three|four|five|six|seven|first|second|third|fourth|fifth|last)/i);
+  if (deleteDayAndRedistributeMatch) {
+    const raw = deleteDayAndRedistributeMatch[1];
+    const ordinalMap = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, last: -1 };
+    const dayNum = parseInt(raw) || ordinalMap[raw.toLowerCase()] || WORD_TO_NUM[raw.toLowerCase()] || 1;
+    return { intent: 'DELETE_DAY_AND_REDISTRIBUTE', targetDay: dayNum };
+  }
+
+  // 3. DELETE_DAY (without redistribution): "remove day 2", "delete day 3"
+  const deleteSingleDayMatch = p.match(/^(?:remove|delete|drop|cut|take out)\s+(?:the\s+)?day\s*(\d+|one|two|three|four|five|six|seven|first|second|third|fourth|fifth|last)\s*(?:from\s+(?:the\s+)?(?:trip|itinerary))?$/i)
+    || p.match(/^(?:remove|delete|drop|cut|take out)\s+(?:the\s+)?(first|second|third|fourth|fifth|last)\s+day\s*(?:from\s+(?:the\s+)?(?:trip|itinerary))?$/i);
+  if (deleteSingleDayMatch) {
+    const raw = deleteSingleDayMatch[1];
+    const ordinalMap = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, last: -1 };
+    const dayNum = parseInt(raw) || ordinalMap[raw.toLowerCase()] || WORD_TO_NUM[raw.toLowerCase()] || 1;
+    return { intent: 'DELETE_DAY', targetDay: dayNum };
+  }
+
+  // 4. CLEAR_DAY_STOPS: "clear all stops on day 2"
+  const clearDayMatch = p.match(/(?:remove|clear|delete|drop)\s+(?:all\s+)?(?:stops?|places?)\s+(?:from|on|in)\s+day\s*(\d+)/i)
+    || p.match(/(?:clear|empty)\s+day\s*(\d+)/i);
+  if (clearDayMatch) {
+    return { intent: 'CLEAR_DAY_STOPS', targetDay: parseInt(clearDayMatch[1]) };
+  }
+
+  // 5. INSERT_DAY / ADD_DAY: "add a day", "insert a day before day 2"
+  const insertBeforeMatch = p.match(/(?:add|insert|put|include)\s+(?:(?:a\s+)?day|(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+days)\s+before\s+day\s*(\d+)/i)
+    || p.match(/(?:add|insert|put|include)\s+(?:(?:a\s+)?day|(\d+|one|two|three|four|five)\s+days)\s+before\s+(?:the\s+)?(first|second|third|fourth|fifth)\s+day/i);
+  const insertAfterMatch = p.match(/(?:add|insert|put|include)\s+(?:(?:a\s+)?day|(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+days)\s+after\s+day\s*(\d+)/i)
+    || p.match(/(?:add|insert|put|include)\s+(?:(?:a\s+)?day|(\d+|one|two|three|four|five)\s+days)\s+after\s+(?:the\s+)?(first|second|third|fourth|fifth)\s+day/i);
+  const addDayMatch = p.match(/(?:add|include|insert)\s+(?:(a|another|one|1|\d+|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:more\s+)?days?(?:\s+to\s+my\s+trip)?$/i);
+
+  const ordinalMap = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+  if (insertBeforeMatch) {
+    const rawNum = insertBeforeMatch[1];
+    const num = rawNum ? (parseInt(rawNum) || WORD_TO_NUM[rawNum.toLowerCase()] || 1) : 1;
+    const rawDay = insertBeforeMatch[2];
+    const dayNum = parseInt(rawDay) || ordinalMap[rawDay.toLowerCase()] || 1;
+    return { intent: 'INSERT_DAY', targetPos: Math.max(1, dayNum), numDays: num };
+  }
+  if (insertAfterMatch) {
+    const rawNum = insertAfterMatch[1];
+    const num = rawNum ? (parseInt(rawNum) || WORD_TO_NUM[rawNum.toLowerCase()] || 1) : 1;
+    const rawDay = insertAfterMatch[2];
+    const dayNum = parseInt(rawDay) || ordinalMap[rawDay.toLowerCase()] || 1;
+    return { intent: 'INSERT_DAY', targetPos: dayNum + 1, numDays: num };
+  }
+  if (addDayMatch) {
+    const rawNum = addDayMatch[1];
+    const num = rawNum ? (parseInt(rawNum) || WORD_TO_NUM[rawNum.toLowerCase()] || 1) : 1;
+    return { intent: 'INSERT_DAY', targetPos: 999, numDays: num };
+  }
+
+  // 6. ADD_STOP: "add [place] to day [N]" or "add [place]"
+  const addStopMatch = p.match(/(?:add|include|put|insert)\s+(?:a\s+)?(.+?)(?:\s+(?:to|on|in)\s+day\s*(\d+))?$/i)
+    || p.match(/(?:add|include|put|insert)\s+(?:a\s+)?(.+?)(?:\s+(?:to|on|in)\s+day\s*(\d+))/i);
+  if (addStopMatch) {
+    const placeName = addStopMatch[1].replace(/\s+(?:to|on|in)\s+day\s*\d+$/i, '').trim();
+    const dayNum = addStopMatch[2] ? parseInt(addStopMatch[2]) : null;
+    if (!/^\d+\s+(?:more\s+)?days?(?:\s+.*)?$/i.test(placeName) && !/^(a|another|one)\s+day$/i.test(placeName) && placeName.length > 1 && placeName.length < 120) {
+      return { intent: 'ADD_STOP', placeName, targetDay: dayNum };
+    }
+  }
+
+  // 7. SWAP_STOP: "swap [A] with [B]"
+  const swapMatch = p.match(/(?:swap|replace|change)\s+(.+?)\s+(?:with|to|for)\s+(.+)/i);
+  if (swapMatch) {
+    return { intent: 'SWAP_STOP', oldName: swapMatch[1].trim(), newName: swapMatch[2].trim() };
+  }
+
+  // 8. REMOVE_STOPS: "remove [place1] and [place2]"
+  const removeStopMatch = p.match(/(?:remove|delete|drop|take out)\s+(?:the\s+)?(.+?)(?:\s+from\s+day\s*(\d+))?$/i);
+  if (removeStopMatch) {
+    const rawTarget = removeStopMatch[1].trim();
+    const dayNum = removeStopMatch[2] ? parseInt(removeStopMatch[2]) : null;
+
+    if (/^day\s*\d+$/i.test(rawTarget)) {
+      const dNum = parseInt(rawTarget.replace(/\D/g, ''));
+      return { intent: 'DELETE_DAY', targetDay: dNum };
+    }
+
+    const parts = rawTarget
+      .split(/\s+(?:and|&)\s+|,\s*/i)
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && !/^(the|a|an)$/i.test(s));
+
+    if (parts.length > 0 && !/^\d+\s+days?$/i.test(rawTarget)) {
+      return { intent: 'REMOVE_STOPS', targets: parts, targetDay: dayNum };
+    }
+  }
+
+  return null;
+}
+
 router.post('/chat', async (req, res) => {
   try {
     const { messages, currentTrip } = req.body || {};
 
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'messages array is required' });
+    }
+
+    // ── Deterministic Handler for Day / Stop Modifications & Real Map Queries ──
+    const latestUserMsg = messages[messages.length - 1]?.content || '';
+    const modIntent = (currentTrip && Array.isArray(currentTrip.days) && currentTrip.days.length > 0)
+      ? parseTripModificationIntent(latestUserMsg)
+      : null;
+
+    if (modIntent) {
+      console.log(`[server]: Executing deterministic modification intent: ${modIntent.intent}`);
+      const trip = JSON.parse(JSON.stringify(currentTrip));
+      let replyMessage = '';
+
+      // Determine center coordinates of current trip
+      let centerLat = 0, centerLng = 0, validCount = 0;
+      for (const d of trip.days) {
+        for (const s of (d.stops || [])) {
+          if (s.lat && s.lng && s.lat !== 0 && s.lng !== 0) {
+            centerLat += s.lat; centerLng += s.lng; validCount++;
+          }
+        }
+      }
+      const tripCenterLat = validCount > 0 ? centerLat / validCount : 48.8566;
+      const tripCenterLng = validCount > 0 ? centerLng / validCount : 2.3522;
+
+      // ── ADD_STOP: Real place lookup from OpenStreetMap / Nominatim / Landmarks ──
+      if (modIntent.intent === 'ADD_STOP') {
+        const targetDayIdx = modIntent.targetDay ? Math.min(Math.max(modIntent.targetDay - 1, 0), trip.days.length - 1) : 0;
+        const targetDay = trip.days[targetDayIdx];
+
+        const realPlace = await geocodeRealStop(modIntent.placeName, trip.destination, tripCenterLat, tripCenterLng);
+        const isDup = targetDay.stops.some(s => isDuplicateStop(realPlace, s));
+
+        if (isDup) {
+          return res.status(200).json({
+            message: `"${realPlace.name}" is already on Day ${targetDay.dayNumber}! Would you like to add it to a different day instead?`,
+            trip,
+            isComplete: true,
+            mapCenter: null
+          });
+        }
+
+        const newOrder = targetDay.stops.length + 1;
+        targetDay.stops.push({
+          id: `s${targetDay.dayNumber}-${newOrder}`,
+          name: realPlace.name,
+          lat: realPlace.lat,
+          lng: realPlace.lng,
+          category: realPlace.category,
+          timeEstimate: TIME_SLOTS[Math.min(newOrder - 1, TIME_SLOTS.length - 1)],
+          costEstimate: realPlace.costEstimate || 10,
+          order: newOrder,
+          rationale: realPlace.rationale || `Added ${realPlace.name} to your ${trip.destination} itinerary.`
+        });
+
+        targetDay.stops = optimizeDayStopsRoute(targetDay.stops);
+        deduplicateTripStops(trip);
+        calculateAndEnforceTripBudget(trip, messages);
+
+        replyMessage = `Done! I've added "${realPlace.name}" to Day ${targetDay.dayNumber} with verified map coordinates and schedule.`;
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: { lat: realPlace.lat, lng: realPlace.lng, zoom: 14 }
+        });
+      }
+
+      // ── INSERT_DAY: Discover REAL attractions from map & query ──
+      if (modIntent.intent === 'INSERT_DAY') {
+        const numDaysToAdd = modIntent.numDays || 1;
+        const allStops = trip.days.flatMap(d => d.stops || []);
+        const realAttractions = await fetchRealAttractionsForCity(trip.destination, allStops, 4 * numDaysToAdd, tripCenterLat, tripCenterLng);
+        const clusteredAttractions = clusterAttractionsForDays(realAttractions, numDaysToAdd, 4);
+
+        let targetPos = Math.min(Math.max(modIntent.targetPos || (trip.days.length + 1), 1), trip.days.length + 1);
+        
+        for (let d = 0; d < numDaysToAdd; d++) {
+          const newDayNum = targetPos + d;
+          const dayStops = clusteredAttractions[d];
+
+          const newStops = dayStops.length >= 1 ? dayStops.map((place, idx) => ({
+            id: `s${newDayNum}-${idx + 1}`,
+            name: place.name,
+            lat: place.lat,
+            lng: place.lng,
+            category: place.category,
+            timeEstimate: TIME_SLOTS[idx],
+            costEstimate: place.costEstimate || 10,
+            order: idx + 1,
+            rationale: place.rationale || `Explore ${place.name} in ${trip.destination}.`
+          })) : [1, 2, 3, 4].map(s => ({
+            id: `s${newDayNum}-${s}`,
+            name: `Landmark ${s} in ${trip.destination}`,
+            lat: tripCenterLat,
+            lng: tripCenterLng,
+            category: 'attraction',
+            timeEstimate: TIME_SLOTS[s - 1],
+            costEstimate: 10,
+            order: s,
+            rationale: `Explore ${trip.destination}.`
+          }));
+
+          const newDayObj = {
+            id: `day-${newDayNum}`,
+            dayNumber: newDayNum,
+            colorHue: DAY_COLOR_PALETTE[(newDayNum - 1) % DAY_COLOR_PALETTE.length],
+            stops: optimizeDayStopsRoute(newStops)
+          };
+
+          trip.days.splice(targetPos - 1 + d, 0, newDayObj);
+        }
+
+        reindexTripDaysAndStops(trip);
+        deduplicateTripStops(trip);
+        calculateAndEnforceTripBudget(trip, messages);
+
+        replyMessage = `Done! I've added ${numDaysToAdd} new day(s) featuring verified attractions in ${trip.destination}.`;
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: null
+        });
+      }
+
+      // ── EXTEND_TO_CITY: Multi-city extension with REAL city attractions ──
+      if (modIntent.intent === 'EXTEND_TO_CITY') {
+        const newCity = modIntent.newCity;
+        const extendDays = modIntent.extendDays || 2;
+        const existingDayCount = trip.days.length;
+        const capitalizedCity = newCity.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+
+        const cityGeo = await geocodeLocation(capitalizedCity);
+        const cityLat = cityGeo ? cityGeo.lat : tripCenterLat;
+        const cityLng = cityGeo ? cityGeo.lng : tripCenterLng;
+
+        const allStops = trip.days.flatMap(d => d.stops || []);
+        const realAttractions = await fetchRealAttractionsForCity(capitalizedCity, allStops, 4 * extendDays, cityLat, cityLng);
+        const clusteredAttractions = clusterAttractionsForDays(realAttractions, extendDays, 4);
+
+        const transitDayNum = existingDayCount + 1;
+        const transitDay = {
+          id: `day-${transitDayNum}`,
+          dayNumber: transitDayNum,
+          colorHue: DAY_COLOR_PALETTE[(transitDayNum - 1) % DAY_COLOR_PALETTE.length],
+          stops: [
+            {
+              id: `s${transitDayNum}-1`,
+              name: `Departure from ${trip.destination}`,
+              lat: tripCenterLat, lng: tripCenterLng,
+              category: 'transport',
+              timeEstimate: '08:00 AM - 10:00 AM',
+              costEstimate: 0, order: 1,
+              rationale: `Check out and head out from ${trip.destination}.`
+            },
+            {
+              id: `s${transitDayNum}-2`,
+              name: `Travel to ${capitalizedCity}`,
+              lat: (tripCenterLat + cityLat) / 2, lng: (tripCenterLng + cityLng) / 2,
+              category: 'transport',
+              timeEstimate: '10:00 AM - 02:00 PM',
+              costEstimate: 50, order: 2,
+              rationale: `Transit to ${capitalizedCity} by train, flight, or bus.`
+            },
+            {
+              id: `s${transitDayNum}-3`,
+              name: `Arrival & Check-in in ${capitalizedCity}`,
+              lat: cityLat, lng: cityLng,
+              category: 'accommodation',
+              timeEstimate: '02:00 PM - 04:00 PM',
+              costEstimate: 0, order: 3,
+              rationale: `Arrive in ${capitalizedCity}, check in, and get settled.`
+            },
+            {
+              id: `s${transitDayNum}-4`,
+              name: `Evening Walk in ${capitalizedCity}`,
+              lat: cityLat + 0.002, lng: cityLng + 0.002,
+              category: 'attraction',
+              timeEstimate: '05:00 PM - 07:00 PM',
+              costEstimate: 0, order: 4,
+              rationale: `Enjoy your first evening stroll in ${capitalizedCity}.`
+            }
+          ]
+        };
+        trip.days.push(transitDay);
+
+        for (let d = 1; d <= extendDays; d++) {
+          const dayNum = existingDayCount + 1 + d;
+          const dayStops = clusteredAttractions[d - 1];
+
+          trip.days.push({
+            id: `day-${dayNum}`,
+            dayNumber: dayNum,
+            colorHue: DAY_COLOR_PALETTE[(dayNum - 1) % DAY_COLOR_PALETTE.length],
+            stops: dayStops.length > 0 ? dayStops.map((place, idx) => ({
+              id: `s${dayNum}-${idx + 1}`,
+              name: place.name,
+              lat: place.lat,
+              lng: place.lng,
+              category: place.category,
+              timeEstimate: TIME_SLOTS[idx],
+              costEstimate: place.costEstimate || 10,
+              order: idx + 1,
+              rationale: place.rationale || `Explore ${place.name} in ${capitalizedCity}.`
+            })) : [1, 2, 3, 4].map(s => ({
+              id: `s${dayNum}-${s}`,
+              name: `Attraction ${s} in ${capitalizedCity}`,
+              lat: cityLat, lng: cityLng,
+              category: 'attraction',
+              timeEstimate: TIME_SLOTS[s - 1],
+              costEstimate: 10, order: s,
+              rationale: `Explore ${capitalizedCity}.`
+            }))
+          });
+        }
+
+        if (!trip.destination.toLowerCase().includes(capitalizedCity.toLowerCase())) {
+          trip.destination = `${trip.destination} + ${capitalizedCity}`;
+        }
+
+        reindexTripDaysAndStops(trip);
+        deduplicateTripStops(trip);
+        calculateAndEnforceTripBudget(trip, messages);
+
+        replyMessage = `Done! I've extended your trip to include ${capitalizedCity}! Your existing itinerary is preserved, plus a travel day and ${extendDays} days of verified attractions in ${capitalizedCity} (now ${trip.days.length} days total).`;
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: { lat: cityLat, lng: cityLng, zoom: 12 }
+        });
+      }
+
+      // ── SWAP_STOP ──
+      if (modIntent.intent === 'SWAP_STOP') {
+        const realNewPlace = await geocodeRealStop(modIntent.newName, trip.destination, tripCenterLat, tripCenterLng);
+        let swapped = false;
+
+        for (const day of trip.days) {
+          const idx = day.stops.findIndex(s => s.name.toLowerCase().includes(modIntent.oldName.toLowerCase()));
+          if (idx >= 0) {
+            day.stops[idx].name = realNewPlace.name;
+            day.stops[idx].lat = realNewPlace.lat;
+            day.stops[idx].lng = realNewPlace.lng;
+            day.stops[idx].category = realNewPlace.category;
+            day.stops[idx].rationale = realNewPlace.rationale || `Swapped in ${realNewPlace.name}.`;
+            day.stops = optimizeDayStopsRoute(day.stops);
+            swapped = true;
+            break;
+          }
+        }
+
+        deduplicateTripStops(trip);
+        calculateAndEnforceTripBudget(trip, messages);
+
+        if (swapped) {
+          replyMessage = `Done! I've replaced "${modIntent.oldName}" with "${realNewPlace.name}" with real map coordinates.`;
+        } else {
+          replyMessage = `I couldn't find "${modIntent.oldName}" in your itinerary to swap.`;
+        }
+
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: null
+        });
+      }
+
+      // ── DELETE_DAY_AND_REDISTRIBUTE ──
+      if (modIntent.intent === 'DELETE_DAY_AND_REDISTRIBUTE') {
+        if (trip.days.length <= 1) {
+          return res.status(200).json({
+            message: `Cannot remove Day ${modIntent.targetDay} because it is the only day in your itinerary! You can modify its stops instead.`,
+            trip,
+            isComplete: true,
+            mapCenter: null
+          });
+        }
+
+        let dayIdx = modIntent.targetDay === -1 ? trip.days.length - 1 : modIntent.targetDay - 1;
+        dayIdx = Math.max(0, Math.min(dayIdx, trip.days.length - 1));
+        const targetDayNum = trip.days[dayIdx].dayNumber || (dayIdx + 1);
+        const orphanStops = trip.days[dayIdx].stops || [];
+
+        trip.days.splice(dayIdx, 1);
+        reindexTripDaysAndStops(trip);
+        assignStopsToNearestDays(orphanStops, trip.days);
+        deduplicateTripStops(trip);
+        calculateAndEnforceTripBudget(trip, messages);
+
+        replyMessage = `Done! I've removed Day ${targetDayNum} and intelligently reassigned its stops to the remaining days with the closest nearby places (with all duplicates eliminated). Your trip is now ${trip.days.length} days.`;
+
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: null
+        });
+      }
+
+      // ── DELETE_DAY ──
+      if (modIntent.intent === 'DELETE_DAY') {
+        if (trip.days.length <= 1) {
+          return res.status(200).json({
+            message: `Cannot remove Day ${modIntent.targetDay} because it is the only day in your itinerary! You can modify its stops instead.`,
+            trip,
+            isComplete: true,
+            mapCenter: null
+          });
+        }
+
+        let dayIdx = modIntent.targetDay === -1 ? trip.days.length - 1 : modIntent.targetDay - 1;
+        dayIdx = Math.max(0, Math.min(dayIdx, trip.days.length - 1));
+        const targetDayNum = trip.days[dayIdx].dayNumber || (dayIdx + 1);
+
+        trip.days.splice(dayIdx, 1);
+        reindexTripDaysAndStops(trip);
+        deduplicateTripStops(trip);
+        calculateAndEnforceTripBudget(trip, messages);
+
+        replyMessage = `Done! I've removed Day ${targetDayNum} and all its stops from your itinerary. Your trip is now ${trip.days.length} days total.`;
+
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: null
+        });
+      }
+
+      // ── CLEAR_DAY_STOPS ──
+      if (modIntent.intent === 'CLEAR_DAY_STOPS') {
+        const dayIdx = Math.max(0, Math.min(modIntent.targetDay - 1, trip.days.length - 1));
+        trip.days[dayIdx].stops = [];
+        replyMessage = `Done! I've cleared all stops from Day ${modIntent.targetDay}. Would you like me to add new places or experiences?`;
+
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: null
+        });
+      }
+
+      // ── REMOVE_STOPS ──
+      if (modIntent.intent === 'REMOVE_STOPS') {
+        const targets = modIntent.targets;
+        const removedNames = [];
+
+        for (const rawTarget of targets) {
+          const target = rawTarget.trim();
+          const ordinalMatch = target.match(/^stop\s*(\d+)$/i);
+          const positionalMatch = target.match(/^(first|second|third|fourth|fifth|last)\s+stop$/i);
+          const posMap = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, last: -1 };
+
+          const targetOrder = ordinalMatch ? parseInt(ordinalMatch[1]) : (positionalMatch ? posMap[positionalMatch[1].toLowerCase()] : null);
+          const targetName = (!targetOrder) ? target.replace(/^(the|a|an)\s+/i, '').trim() : null;
+
+          for (const day of trip.days) {
+            if (modIntent.targetDay && day.dayNumber !== modIntent.targetDay) continue;
+            if (!Array.isArray(day.stops)) continue;
+
+            let removeIdx = -1;
+            if (targetOrder !== null) {
+              removeIdx = targetOrder === -1 ? day.stops.length - 1 : day.stops.findIndex(s => s.order === targetOrder);
+            } else if (targetName) {
+              const normTarget = normalizeStopName(targetName);
+              removeIdx = day.stops.findIndex(s => {
+                const normS = normalizeStopName(s.name);
+                return normS.includes(normTarget) || normTarget.includes(normS);
+              });
+            }
+
+            if (removeIdx >= 0) {
+              const [removedStop] = day.stops.splice(removeIdx, 1);
+              removedNames.push(removedStop.name);
+            }
+          }
+        }
+
+        reindexTripDaysAndStops(trip);
+        deduplicateTripStops(trip);
+        calculateAndEnforceTripBudget(trip, messages);
+
+        if (removedNames.length > 0) {
+          replyMessage = `Done! I've removed ${removedNames.map(n => `"${n}"`).join(', ')} from your itinerary. Would you like to add any replacement stops or adjust the schedule?`;
+        } else {
+          replyMessage = `I couldn't find ${targets.map(t => `"${t}"`).join(', ')} in your itinerary to remove. Could you specify the exact stop name or day number?`;
+        }
+
+        return res.status(200).json({
+          message: replyMessage,
+          trip,
+          isComplete: true,
+          mapCenter: null
+        });
+      }
     }
 
     const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001/api/v1/generate-trip';
@@ -164,82 +880,157 @@ router.post('/chat', async (req, res) => {
       console.warn('[server]: AI Microservice connection failed, attempting fallback to cloud provider...', aiErr.message);
     }
 
-    // Only use NVIDIA cloud fallback if AI Microservice didn't respond
+    // Cloud Provider Fallback (Groq Primary -> NVIDIA NIM Fallback)
     if (!jsonResponse) {
-    const apiKey = process.env.NVIDIA_API_KEY;
-    const baseUrl = process.env.NIM_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+      const groqKey = process.env.GROQ_API_KEY;
+      const nvidiaKey = process.env.NVIDIA_API_KEY;
 
-    if (!apiKey) {
-      return res.status(500).json({ error: 'AI Microservice is offline and NVIDIA_API_KEY is not configured.' });
-    }
-
-    // Format messages for Llama 3.1
-    const nimMessages = [
-      { role: 'system', content: SYSTEM_PROMPT }
-    ];
-
-    // Map roles: 'user' -> 'user', 'assistant' -> 'assistant'
-    messages.forEach((msg) => {
-      nimMessages.push({
-        role: msg.role === 'assistant' ? 'assistant' : 'user',
-        content: msg.content
-      });
-    });
-
-    if (currentTrip && Object.keys(currentTrip).length > 0 && currentTrip.days && currentTrip.days.length > 0) {
-      nimMessages.push({
-        role: 'system',
-        content: `The current active itinerary state is: ${JSON.stringify(currentTrip)}. If the user asks for changes, modify this state and return the updated version.`
-      });
-    }
-
-    let response;
-    const candidateModels = [
-      'meta/llama-3.3-70b-instruct',
-      'nvidia/llama-3.1-nemotron-51b-instruct',
-      'meta/llama3-70b-instruct',
-      'meta/llama-3.1-8b-instruct'
-    ];
-    let lastError;
-
-    for (const modelCandidate of candidateModels) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s max per model for cloud fallback
-
-        response = await fetch(`${baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: modelCandidate,
-            messages: nimMessages,
-            response_format: { type: 'json_object' },
-            temperature: 0.5,
-            max_tokens: 4096
-          }),
-          signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-        if (response.ok) {
-          console.log(`[server]: LLM response generated successfully using ${modelCandidate}`);
-          break;
-        }
-      } catch (err) {
-        console.warn(`[server]: Model ${modelCandidate} failed or timed out: ${err.message}. Trying next candidate...`);
-        lastError = err;
+      if (!groqKey && !nvidiaKey) {
+        return res.status(500).json({ error: 'AI Microservice is offline and neither GROQ_API_KEY nor NVIDIA_API_KEY is configured.' });
       }
-    }
 
-    if (!response || !response.ok) {
-      throw new Error(`All LLM models failed or timed out. ${lastError ? lastError.message : ''}`);
-    }
+      // Format messages for LLM
+      const formattedChatMessages = [
+        { role: 'system', content: SYSTEM_PROMPT }
+      ];
 
-    const data = await response.json();
-    let rawText = data.choices[0].message.content.trim();
+      messages.forEach((msg) => {
+        formattedChatMessages.push({
+          role: msg.role === 'assistant' ? 'assistant' : 'user',
+          content: msg.content
+        });
+      });
+
+      if (currentTrip && Object.keys(currentTrip).length > 0 && currentTrip.days && currentTrip.days.length > 0) {
+        formattedChatMessages.push({
+          role: 'system',
+          content: `The current active itinerary state is: ${JSON.stringify(currentTrip)}. If the user asks for changes, modify this state and return the updated version.`
+        });
+      }
+
+      let rawText = null;
+
+      // ── Option A: Groq Cloud Provider (Ultra-Fast) ──
+      if (groqKey) {
+        const customGroqModel = process.env.GROQ_MODEL;
+        const defaultGroqModels = [
+          'qwen/qwen3.8-27b',
+          'openai/gpt-oss-120b',
+          'openai/gpt-oss-20b',
+          'allam-2-7b',
+          'groq/compound-mini',
+          'qwen/qwen3.6-27b'
+        ];
+        const groqCandidates = customGroqModel
+          ? [customGroqModel, ...defaultGroqModels.filter(m => m !== customGroqModel)]
+          : defaultGroqModels;
+
+        for (const groqModel of groqCandidates) {
+          try {
+            console.log(`[server]: Attempting Groq generation with model "${groqModel}"...`);
+            let groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${groqKey}`
+              },
+              body: JSON.stringify({
+                model: groqModel,
+                messages: formattedChatMessages,
+                response_format: { type: 'json_object' },
+                temperature: 0.4,
+                max_tokens: 4096
+              }),
+              signal: AbortSignal.timeout(30000)
+            });
+
+            // If 400 on json_object (e.g. thinking models json_validate_failed), retry with standard prompt
+            if (!groqRes.ok && groqRes.status === 400) {
+              console.warn(`[server]: Groq model "${groqModel}" returned 400 on json_object, retrying with standard prompt...`);
+              groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${groqKey}`
+                },
+                body: JSON.stringify({
+                  model: groqModel,
+                  messages: formattedChatMessages,
+                  temperature: 0.4,
+                  max_tokens: 4096
+                }),
+                signal: AbortSignal.timeout(30000)
+              });
+            }
+
+            if (groqRes.ok) {
+              const groqData = await groqRes.json();
+              rawText = (groqData.choices[0]?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+              console.log(`[server]: LLM response generated successfully using Groq "${groqModel}"`);
+              break;
+            } else {
+              const errBody = await groqRes.text().catch(() => '');
+              console.warn(`[server]: Groq model "${groqModel}" returned HTTP ${groqRes.status}: ${errBody.substring(0, 120)}`);
+            }
+          } catch (gErr) {
+            console.warn(`[server]: Groq model "${groqModel}" error:`, gErr.message);
+          }
+        }
+      }
+
+      // ── Option B: NVIDIA NIM Cloud Provider (Fallback) ──
+      if (!rawText && nvidiaKey) {
+        console.log('[server]: Falling back to NVIDIA NIM Cloud Provider...');
+        const baseUrl = process.env.NIM_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+        const candidateModels = [
+          'nvidia/nemotron-3-super-120b-a12b',
+          'nvidia/nemotron-3.5-lightning-30b-a3b',
+          'nvidia/nemotron-3-nano-30b-a3b',
+          'google/gemma-4-31b-it',
+          'moonshotai/kimi-k3',
+          'openai/gpt-oss-20b'
+        ];
+
+        for (const modelCandidate of candidateModels) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+            const response = await fetch(`${baseUrl}/chat/completions`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${nvidiaKey}`
+              },
+              body: JSON.stringify({
+                model: modelCandidate,
+                messages: formattedChatMessages,
+                response_format: { type: 'json_object' },
+                temperature: 0.5,
+                max_tokens: 4096
+              }),
+              signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+            if (response.ok) {
+              const data = await response.json();
+              rawText = (data.choices[0]?.message?.content || '').trim();
+              console.log(`[server]: LLM response generated successfully using NIM "${modelCandidate}"`);
+              break;
+            } else {
+              const errBody = await response.text().catch(() => '');
+              console.warn(`[server]: NIM Model ${modelCandidate} returned HTTP ${response.status}: ${errBody.substring(0, 120)}. Trying next...`);
+            }
+          } catch (err) {
+            console.warn(`[server]: NIM Model ${modelCandidate} failed or timed out: ${err.message}. Trying next candidate...`);
+          }
+        }
+      }
+
+      if (!rawText) {
+        throw new Error('All cloud AI models (Groq and NVIDIA NIM) failed or timed out.');
+      }
 
     try {
       jsonResponse = JSON.parse(rawText);
@@ -366,13 +1157,19 @@ router.post('/chat', async (req, res) => {
 
     // POST-PROCESSING: Enforce exact day count and multi-city route if requested by user in prompt
     // Must run AFTER fallbackCenterLat/Lng are set so new days get correct coordinates
+    // SKIP when the AI microservice handled the request — it has its own validator that already
+    // enforces correct day counts (including multi-city extensions like Paris 2d + transit + Amsterdam 2d = 5d).
+    // Running enforceRequestedDays on top of the AI service output was truncating extended trips.
     let isMultiCity = false;
-    if (jsonResponse && jsonResponse.trip) {
+    if (jsonResponse && jsonResponse.trip && !usedAiMicroservice) {
       const requestedDays = extractRequestedDays(messages);
       isMultiCity = detectMultiCityTrip(jsonResponse.trip, messages);
-      const targetDays = requestedDays || 14; // Default to 14 days if user prompt suggests multi-city/2+ weeks
+      const targetDays = requestedDays || (Array.isArray(jsonResponse.trip.days) ? jsonResponse.trip.days.length : 3);
       console.log(`[server]: Enforcing ${targetDays} days (multiCity: ${isMultiCity})...`);
       enforceRequestedDays(jsonResponse.trip, targetDays, fallbackCenterLat, fallbackCenterLng, messages, isMultiCity);
+    } else if (jsonResponse && jsonResponse.trip) {
+      isMultiCity = detectMultiCityTrip(jsonResponse.trip, messages);
+      console.log(`[server]: AI microservice handled day enforcement — skipping backend enforceRequestedDays (days: ${jsonResponse.trip.days?.length}, multiCity: ${isMultiCity})`);
     }
 
     // POST-PROCESSING: Calculate and enforce correct trip budget (Total Budget = Daily Budget * Total Days)
@@ -380,67 +1177,36 @@ router.post('/chat', async (req, res) => {
       calculateAndEnforceTripBudget(jsonResponse.trip, messages);
     }
 
-    // DYNAMIC GEOCODING: Ensure all LLM-generated stops have valid real-world coordinates
+    // DYNAMIC GEOCODING: Only geocode stops that are MISSING valid coordinates.
+    // If the AI microservice already resolved coordinates (from scoutAgent/OSM), preserve them.
     if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
+      const destName = jsonResponse.trip.destination || '';
       for (const day of jsonResponse.trip.days) {
         if (!Array.isArray(day.stops)) continue;
         for (const stop of day.stops) {
-          try {
-            // 1. If LLM provided valid, non-zero coordinates, trust them!
-            if (
-              typeof stop.lat === 'number' &&
-              typeof stop.lng === 'number' &&
-              !isNaN(stop.lat) &&
-              !isNaN(stop.lng) &&
-              stop.lat !== 0 &&
-              stop.lng !== 0 &&
-              stop.lat >= -90 && stop.lat <= 90 &&
-              stop.lng >= -180 && stop.lng <= 180
-            ) {
-              continue;
-            }
-
-            const cleanQuery = cleanQueryForGeocoding(stop.name);
-            const cacheKey = cleanQuery.toLowerCase().trim();
-
-            if (chatGeocodeCache.has(cacheKey)) {
-              const coords = chatGeocodeCache.get(cacheKey);
-              stop.lat = coords.lat;
-              stop.lng = coords.lng;
-              continue;
-            }
-
-            let coords = null;
-
-            // Attempt 1: Dynamic Search for exact stop name
-            let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery)}&format=geojson&limit=1`;
-            coords = await fetchCoords(url, cleanQuery);
-
-            // Attempt 2: Search with destination context if available
-            if (!coords && jsonResponse.trip.destination) {
-              const queryWithDest = `${cleanQuery}, ${jsonResponse.trip.destination}`;
-              url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryWithDest)}&format=geojson&limit=1`;
-              coords = await fetchCoords(url, queryWithDest);
-            }
-
-            if (coords) {
-              stop.lat = coords.lat;
-              stop.lng = coords.lng;
-              chatGeocodeCache.set(cacheKey, { lat: coords.lat, lng: coords.lng });
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 100)); // Rate limit pause
-          } catch (err) {
-            console.error('Failed to geocode stop dynamically:', stop.name, err);
+          // Skip stops that already have valid, non-zero coordinates
+          const hasValidCoords = typeof stop.lat === 'number' && !isNaN(stop.lat) &&
+                                 typeof stop.lng === 'number' && !isNaN(stop.lng) &&
+                                 stop.lat !== 0 && stop.lng !== 0;
+          if (hasValidCoords) {
+            continue; // Preserve existing valid coordinates from AI microservice
           }
 
-          // Fallback check: if geocoding failed and coords are still invalid, set to mapCenter
-          if (
-            typeof stop.lat !== 'number' || isNaN(stop.lat) ||
-            typeof stop.lng !== 'number' || isNaN(stop.lng)
-          ) {
-            stop.lat = fallbackCenterLat;
-            stop.lng = fallbackCenterLng;
+          try {
+            // Only geocode stops with missing/zero/invalid coordinates
+            const geocoded = await geocodeLocation(stop.name, destName, fallbackCenterLat, fallbackCenterLng);
+            if (geocoded && typeof geocoded.lat === 'number' && typeof geocoded.lng === 'number') {
+              stop.lat = geocoded.lat;
+              stop.lng = geocoded.lng;
+            } else {
+              stop.lat = fallbackCenterLat;
+              stop.lng = fallbackCenterLng;
+            }
+            await new Promise(resolve => setTimeout(resolve, 50)); // Rate limit pause
+          } catch (err) {
+            console.error('Failed to geocode stop dynamically:', stop.name, err);
+            if (typeof stop.lat !== 'number' || isNaN(stop.lat)) stop.lat = fallbackCenterLat;
+            if (typeof stop.lng !== 'number' || isNaN(stop.lng)) stop.lng = fallbackCenterLng;
           }
         }
       }
@@ -476,9 +1242,10 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    // POST-PROCESSING: Remove extreme outlier stops & reorder stops by geographic nearest-neighbor feasibility
+    // POST-PROCESSING: Reorder stops by geographic nearest-neighbor feasibility
     if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
-      const MAX_DISTANCE_KM = isMultiCity ? 5000 : 300; // Allow huge distances for multi-city trips
+      const isModificationRequest = Boolean(currentTrip && Array.isArray(currentTrip.days) && currentTrip.days.length > 0);
+      const MAX_DISTANCE_KM = (isMultiCity || isModificationRequest) ? 10000 : 300; // Allow full distance for modifications & multi-city
 
       for (const day of jsonResponse.trip.days) {
         if (!Array.isArray(day.stops) || day.stops.length < 2) continue;
@@ -489,12 +1256,12 @@ router.post('/chat', async (req, res) => {
         centroidLat /= day.stops.length;
         centroidLng /= day.stops.length;
 
-        // Filter out stops that are too far from centroid
+        // Filter out stops that are extreme outliers (skipped during user modifications to preserve user requested stops)
         const validStops = [];
         const removedStops = [];
         for (const stop of day.stops) {
           const dist = haversineKm(centroidLat, centroidLng, stop.lat, stop.lng);
-          if (dist <= MAX_DISTANCE_KM) {
+          if (dist <= MAX_DISTANCE_KM || isModificationRequest || usedAiMicroservice) {
             validStops.push(stop);
           } else {
             removedStops.push({ name: stop.name, distance: dist.toFixed(1) });
@@ -508,40 +1275,40 @@ router.post('/chat', async (req, res) => {
         // Re-order remaining stops sequentially along minimum geographic route
         day.stops = optimizeDayStopsRoute(validStops);
 
-        // GUARANTEE DEPTH: If a day has fewer than 3 stops, enrich it with local food/culture stops
-        if (day.stops.length < 3 && day.stops.length > 0) {
-          const baseStop = day.stops[0];
+        // GUARANTEE DEPTH: Only for initial automated trip creation (never during user modifications)
+        if (!isModificationRequest && !usedAiMicroservice && day.stops.length < 3 && day.stops.length > 0) {
           const destName = jsonResponse.trip.destination || 'local area';
-
-          if (day.stops.length === 1) {
-            day.stops.push({
-              id: `${day.id}-s2`,
-              name: `Local Street Food & Artisan Market near ${baseStop.name}`,
-              lat: baseStop.lat + (Math.random() - 0.5) * 0.006,
-              lng: baseStop.lng + (Math.random() - 0.5) * 0.006,
-              timeEstimate: '01:00 PM - 03:00 PM',
-              costEstimate: 350,
-              rationale: `Taste local specialties and street food in ${destName}. Recommended nearby spots: Artisan Cafe & Local Bakery. Transit: 5 min walk from ${baseStop.name}.`,
-              order: 2
-            });
-          }
-
-          if (day.stops.length === 2) {
-            day.stops.push({
-              id: `${day.id}-s3`,
-              name: `Panoramic Viewpoint & Evening Sunset Promenade`,
-              lat: baseStop.lat + (Math.random() - 0.5) * 0.008,
-              lng: baseStop.lng + (Math.random() - 0.5) * 0.008,
-              timeEstimate: '05:00 PM - 07:30 PM',
-              costEstimate: 0,
-              rationale: `Relax and enjoy scenic evening views of ${destName}. Nearby dinner tip: Heritage Dining Room & Riverfront Cafe. Transit: 10 min cab/walk from market.`,
-              order: 3
-            });
+          const existingDayStops = jsonResponse.trip.days.flatMap(d => d.stops || []);
+          const neededCount = 3 - day.stops.length;
+          
+          try {
+            const realExtra = await fetchRealAttractionsForCity(destName, existingDayStops, neededCount, day.stops[0].lat, day.stops[0].lng);
+            for (const place of realExtra) {
+              const newOrder = day.stops.length + 1;
+              day.stops.push({
+                id: `${day.id}-s${newOrder}`,
+                name: place.name,
+                lat: place.lat,
+                lng: place.lng,
+                category: place.category || 'attraction',
+                timeEstimate: TIME_SLOTS[Math.min(newOrder - 1, TIME_SLOTS.length - 1)],
+                costEstimate: place.costEstimate || 10,
+                rationale: place.rationale || `Visit ${place.name} in ${destName}.`,
+                order: newOrder
+              });
+            }
+          } catch (e) {
+            console.warn('[server]: fetchRealAttractionsForCity failed during depth guarantee:', e.message);
           }
 
           day.stops = optimizeDayStopsRoute(day.stops);
         }
       }
+    }
+
+    // POST-PROCESSING: Global stop deduplication across all days
+    if (jsonResponse.trip && Array.isArray(jsonResponse.trip.days)) {
+      jsonResponse.trip = deduplicateTripStops(jsonResponse.trip);
     }
 
     return res.status(200).json(jsonResponse);
@@ -593,106 +1360,6 @@ async function fetchCoords(url, fallbackQuery = null) {
   }
 
   return null;
-}
-
-// Known landmark dictionary for rapid, reliable coordinate matching
-function lookupKnownLandmark(queryStr, centerLat = null, centerLng = null) {
-  if (!queryStr) return null;
-  const q = queryStr.toLowerCase();
-  let match = null;
-
-  // ─── Shinjuku Landmarks ───
-  if (q.includes('shinjuku gyoen') || q.includes('gyoen')) match = { lat: 35.6852, lng: 139.7101 };
-  else if (q.includes('golden gai')) match = { lat: 35.6942, lng: 139.7046 };
-  else if (q.includes('omoide yokocho') || q.includes('memory lane')) match = { lat: 35.6928, lng: 139.6994 };
-  else if (q.includes('kabukicho') || q.includes('kabuki-cho')) match = { lat: 35.6938, lng: 139.7034 };
-  else if (q.includes('tocho') || q.includes('tokyo metropolitan government')) match = { lat: 35.6896, lng: 139.6917 };
-  else if (q.includes('godzilla head') || q.includes('hotel gracery shinjuku')) match = { lat: 35.6953, lng: 139.7020 };
-  else if (q.includes('hanazono-jinja')) match = { lat: 35.6931, lng: 139.7061 };
-  else if (q.includes('shinjuku central park')) match = { lat: 35.6898, lng: 139.6878 };
-  else if (q.includes('samurai museum')) match = { lat: 35.6955, lng: 139.7029 };
-  else if (q.includes('shin-okubo korea town')) match = { lat: 35.7013, lng: 139.7000 };
-  else if (q.includes('shinjuku takashimaya times square')) match = { lat: 35.6872, lng: 139.7018 };
-  else if (q.includes('shinjuku station')) match = { lat: 35.6895, lng: 139.6917 };
-
-  // ─── Shibuya & Harajuku Landmarks ───
-  if (q.includes('shibuya crossing') || q.includes('hachiko') || q.includes('shibuya sky') || q.includes('shibuya')) return { lat: 35.6596, lng: 139.7006 };
-  if (q.includes('harajuku') || q.includes('takeshita') || q.includes('omotesando')) return { lat: 35.6715, lng: 139.7030 };
-  if (q.includes('meiji shrine') || q.includes('meiji jingu') || q.includes('yoyogi')) return { lat: 35.6764, lng: 139.6997 };
-
-  // ─── Asakusa & Eastern Tokyo Landmarks ───
-  if (q.includes('senso-ji') || q.includes('sensoji') || q.includes('nakamise') || q.includes('asakusa')) return { lat: 35.7148, lng: 139.7967 };
-  if (q.includes('skytree') || q.includes('solamachi')) return { lat: 35.7101, lng: 139.8107 };
-  if (q.includes('ueno park') || q.includes('ueno zoo') || q.includes('ueno')) return { lat: 35.7141, lng: 139.7741 };
-  if (q.includes('akihabara') || q.includes('electric town')) return { lat: 35.6997, lng: 139.7714 };
-
-  // ─── Ginza & Central Tokyo Landmarks ───
-  if (q.includes('tsukiji') || q.includes('outer market')) return { lat: 35.6655, lng: 139.7712 };
-  if (q.includes('teamlab') || q.includes('toyosu')) return { lat: 35.6489, lng: 139.7912 };
-  if (q.includes('ginza') || q.includes('kabukiza')) return { lat: 35.6718, lng: 139.7650 };
-  if (q.includes('imperial palace') || q.includes('chiyoda')) return { lat: 35.6852, lng: 139.7528 };
-  if (q.includes('tokyo tower') || q.includes('zojo-ji') || q.includes('roppongi')) return { lat: 35.6586, lng: 139.7454 };
-  if (q.includes('odaiba') || q.includes('rainbow bridge')) return { lat: 35.6293, lng: 139.7766 };
-
-  // ─── Kyoto Landmarks ───
-  if (q.includes('kinkaku') || q.includes('golden pavilion')) return { lat: 35.0394, lng: 135.7292 };
-  if (q.includes('ginkaku') || q.includes('silver pavilion')) return { lat: 35.0272, lng: 135.7982 };
-  if (q.includes('fushimi inari') || q.includes('torii')) return { lat: 34.9671, lng: 135.7727 };
-  if (q.includes('kiyomizu') || q.includes('kiyomizudera')) return { lat: 34.9949, lng: 135.7850 };
-  if (q.includes('arashiyama') || q.includes('bamboo')) return { lat: 35.0156, lng: 135.6715 };
-  if (q.includes('gion') || q.includes('yasaka') || q.includes('hanamikoji')) return { lat: 35.0037, lng: 135.7785 };
-  if (q.includes('nijo castle') || q.includes('nijojo')) return { lat: 35.0142, lng: 135.7482 };
-  if (q.includes('nishiki') || q.includes('nishiki market')) return { lat: 35.0050, lng: 135.7649 };
-  if (q.includes('kyoto station') || q.includes('kyoto tower')) return { lat: 34.9858, lng: 135.7588 };
-  if (q.includes('ryoan-ji') || q.includes('ryoanji')) return { lat: 35.0344, lng: 135.7182 };
-
-  // ─── USA Landmarks ───
-  if (q.includes('statue of liberty')) return { lat: 40.6892, lng: -74.0445 };
-  if (q.includes('times square')) return { lat: 40.7580, lng: -73.9855 };
-  if (q.includes('central park')) return { lat: 40.7829, lng: -73.9654 };
-  if (q.includes('brooklyn bridge')) return { lat: 40.7061, lng: -73.9969 };
-  if (q.includes('metropolitan museum') || q.includes('the met')) return { lat: 40.7794, lng: -73.9632 };
-  if (q.includes('empire state building')) return { lat: 40.7484, lng: -73.9857 };
-  if (q.includes('grand central')) return { lat: 40.7527, lng: -73.9772 };
-
-  if (q.includes('hollywood sign')) return { lat: 34.1341, lng: -118.3215 };
-  if (q.includes('santa monica pier') || q.includes('santa monica')) return { lat: 34.0094, lng: -118.4973 };
-  if (q.includes('griffith observatory') || q.includes('griffith')) return { lat: 34.1184, lng: -118.3004 };
-  if (q.includes('getty center')) return { lat: 34.0780, lng: -118.4741 };
-  if (q.includes('venice beach')) return { lat: 33.9850, lng: -118.4695 };
-  if (q.includes('lacma')) return { lat: 34.0639, lng: -118.3592 };
-
-  if (q.includes('millennium park') || q.includes('cloud gate') || q.includes('the bean')) return { lat: 41.8827, lng: -87.6233 };
-  if (q.includes('art institute of chicago')) return { lat: 41.8796, lng: -87.6237 };
-  if (q.includes('navy pier')) return { lat: 41.8917, lng: -87.6086 };
-  if (q.includes('willis tower') || q.includes('sears tower')) return { lat: 41.8789, lng: -87.6359 };
-  if (q.includes('magnificent mile')) return { lat: 41.8940, lng: -87.6246 };
-
-  if (q.includes('golden gate bridge')) return { lat: 37.8199, lng: -122.4783 };
-  if (q.includes('fisherman\'s wharf') || q.includes('fishermans wharf')) return { lat: 37.8080, lng: -122.4177 };
-  if (q.includes('alcatraz')) return { lat: 37.8270, lng: -122.4230 };
-  if (q.includes('lombard street')) return { lat: 37.8021, lng: -122.4187 };
-
-  if (q.includes('las vegas strip') || q.includes('the strip')) return { lat: 36.1147, lng: -115.1728 };
-  if (q.includes('bellagio fountains') || q.includes('bellagio')) return { lat: 36.1126, lng: -115.1767 };
-  if (q.includes('fremont street')) return { lat: 36.1699, lng: -115.1423 };
-
-  if (q.includes('south beach')) return { lat: 25.7826, lng: -80.1341 };
-  if (q.includes('wynwood walls')) return { lat: 25.8010, lng: -80.1994 };
-
-  if (q.includes('national mall') || q.includes('lincoln memorial')) return { lat: 38.8893, lng: -77.0502 };
-  if (q.includes('white house')) return { lat: 38.8977, lng: -77.0365 };
-  if (q.includes('us capitol') || q.includes('u.s. capitol')) return { lat: 38.8899, lng: -77.0091 };
-
-  if (match && typeof centerLat === 'number' && typeof centerLng === 'number') {
-    const dist = haversineKm(centerLat, centerLng, match.lat, match.lng);
-    if (dist > 250) {
-      console.log(`[server]: Rejecting landmark match for "${queryStr}" (${dist.toFixed(1)}km from trip center)`);
-      return null;
-    }
-  }
-
-  return match;
 }
 
 // Common country/abbreviation hallucination fixes
@@ -885,13 +1552,10 @@ function extractRequestedDays(messages) {
       }
     }
 
-    // Priority 1 (LOWEST): Standalone "X days" — but SKIP if preceded by "for" (e.g., "LA for 2 days")
+    // Priority 1: Standalone "X days" or "for X days"
     if (bestPriority < 1) {
       const allDayMatches = [...text.matchAll(/(?:^|[^a-z])(\d+)\s*\+?\s*(?:-\s*day|day|days)\b/gi)];
       for (const m of allDayMatches) {
-        const matchIdx = m.index;
-        const precedingText = text.substring(Math.max(0, matchIdx - 10), matchIdx).trim();
-        if (/\bfor\s*$/i.test(precedingText)) continue;
         const days = parseInt(m[1], 10);
         if (days > 0 && days <= 30 && (bestDays === null || days > bestDays)) {
           bestDays = Math.min(days, 14);
@@ -964,47 +1628,46 @@ function enforceRequestedDays(trip, targetDays, centerLat = 35.6895, centerLng =
   }
 }
 
-// Extract budget details from user messages
+// Extract budget details from user messages (multi-currency aware: $, ₹, ¥, £, €, etc.)
 function extractUserBudget(messages) {
   if (!messages || !Array.isArray(messages)) return null;
+
+  const cleanNum = (str) => parseInt(String(str).replace(/[^\d]/g, ''), 10);
+  const currSym = '(?:[\\$€£₹¥₩฿]|AED|A\\$|CA\\$|S\\$|Rp|₫)?\\s*';
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role !== 'user' || !msg.content) continue;
     const text = msg.content;
 
-    // 1. Range per day: "$80-120 per day", "$50-$80/day", "Budget: $80–120"
-    // Require a $ sign OR the word 'budget' to prevent matching "8 to 10 days"
-    const dailyRangeMatch = text.match(/(?:\$|budget.*?)(\d+)\s*(?:[–-]|to)\s*\$?(\d+)\s*(?:\/|\s*per|\s*a)?\s*(?:day|daily)?/i);
+    // 1. Range per day: "$80-120 per day", "₹2,000–3,500/day", "Budget: ₹2,000–3,500"
+    const rangeRegex = new RegExp(`(?:Budget\\s*:\\s*|budget.*?)?${currSym}([\\d,]+)\\s*(?:[–-]|to)\\s*${currSym}([\\d,]+)\\s*(?:\\/|\\s*per|\\s*a)?\\s*(?:day|daily)?`, 'i');
+    const dailyRangeMatch = text.match(rangeRegex);
     if (dailyRangeMatch) {
-      // Avoid matching "8 to 10 days" if it happens to be caught by 'budget' prefix but has 'days' suffix
-      const contextStr = text.substring(dailyRangeMatch.index, dailyRangeMatch.index + 20).toLowerCase();
-      if (!contextStr.includes('day') && contextStr.includes('days')) {
-         // Skip, it's talking about a day range not budget range
-      } else {
-        const min = parseInt(dailyRangeMatch[1], 10);
-        const max = parseInt(dailyRangeMatch[2], 10);
-        if (min > 0 && max > min && max <= 5000) {
-          const avgDaily = Math.round((min + max) / 2);
-          return { isDaily: true, dailyRate: avgDaily, minRate: min, maxRate: max };
-        }
+      const min = cleanNum(dailyRangeMatch[1]);
+      const max = cleanNum(dailyRangeMatch[2]);
+      if (min > 0 && max > min) {
+        const avgDaily = Math.round((min + max) / 2);
+        return { isDaily: true, dailyRate: avgDaily, minRate: min, maxRate: max };
       }
     }
 
-    // 2. Single rate per day: "$100/day", "$80 per day", "$150 a day", "daily budget: $80"
-    const singleDailyMatch = text.match(/(?:daily\s+budget|budget)?\s*\$?(\d+)\s*(?:\/|\s*per|\s*a)\s*day/i);
+    // 2. Single rate per day: "$100/day", "₹5,000/day", "Budget: ₹5,000", "daily budget: 1500"
+    const singleRegex = new RegExp(`(?:daily\\s+budget|budget\\s*:\\s*|budget)?\\s*${currSym}([\\d,]+)\\s*(?:\\/|\\s*per|\\s*a)?\\s*day`, 'i');
+    const singleDailyMatch = text.match(singleRegex);
     if (singleDailyMatch) {
-      const rate = parseInt(singleDailyMatch[1], 10);
-      if (rate > 0 && rate <= 10000) {
+      const rate = cleanNum(singleDailyMatch[1]);
+      if (rate > 0) {
         return { isDaily: true, dailyRate: rate, minRate: rate, maxRate: rate };
       }
     }
 
-    // 3. Explicit total budget: "budget of $1500", "total budget: $2000", "budget $2000"
-    const totalMatch = text.match(/(?:total\s+budget|budget\s+of|budget:?\s*\$?)\s*\$?(\d+)\b/i);
+    // 3. Explicit total budget: "budget of $1500", "total budget of ₹50,000", "budget 2000"
+    const totalRegex = new RegExp(`(?:total\\s+budget(?:\\s+of)?|budget\\s+of|budget:?)\\s*${currSym}([\\d,]+)\\b`, 'i');
+    const totalMatch = text.match(totalRegex);
     if (totalMatch) {
-      const total = parseInt(totalMatch[1], 10);
-      if (total > 50) {
+      const total = cleanNum(totalMatch[1]);
+      if (total > 0) {
         return { isDaily: false, totalBudget: total };
       }
     }

@@ -1,72 +1,41 @@
 import { Router } from 'express';
 import { geocodeCache } from '../utils/cache.js';
+import { geocodeLocation } from '../utils/geocoder.js';
 
 const router = Router();
 
-// GET /api/geocode?text=Sensoji
+// GET /api/geocode?text=Sensoji&destination=Tokyo&lat=35.68&lng=139.76
 router.get('/geocode', async (req, res) => {
   try {
-    const { text } = req.query || {};
+    const { text, destination, lat, lng } = req.query || {};
     
     if (!text || text.trim() === '') {
       return res.status(400).json({ error: 'Search text is required' });
     }
 
-    const cacheKey = text.toLowerCase().trim();
-    const cachedData = geocodeCache.get(cacheKey);
-    if (cachedData) {
-      return res.status(200).json(cachedData);
-    }
+    const cLat = lat ? parseFloat(lat) : null;
+    const cLng = lng ? parseFloat(lng) : null;
 
-    let features = [];
+    const locationResult = await geocodeLocation(text, destination, cLat, cLng);
 
-    // Attempt 1: OpenStreetMap Nominatim
-    try {
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(text)}&format=geojson&limit=3`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'WanderloopTravelPlanner/1.0 (contact: rupayansaha@wanderloop.com)'
-        }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.features && data.features.length > 0) {
-          features = data.features;
-        }
-      }
-    } catch (err) {
-      console.warn('[Geocode]: Nominatim primary query failed:', err.message);
-    }
-
-    // Attempt 2: Komoot Photon API (Secondary free global provider)
-    if (features.length === 0) {
-      try {
-        const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=3`;
-        const pRes = await fetch(photonUrl);
-        if (pRes.ok) {
-          const pData = await pRes.json();
-          if (pData.features && pData.features.length > 0) {
-            features = pData.features;
-          }
-        }
-      } catch (err) {
-        console.warn('[Geocode]: Photon secondary query failed:', err.message);
-      }
-    }
-
-    if (features.length > 0) {
+    if (locationResult) {
       const formattedData = {
-        features: features.map(f => ({
-          type: 'Feature',
-          geometry: f.geometry,
-          properties: {
-            label: f.properties.display_name || f.properties.name || text,
-            name: f.properties.name || (f.properties.display_name ? f.properties.display_name.split(',')[0] : text),
-            confidence: 0.9
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [locationResult.lng, locationResult.lat]
+            },
+            properties: {
+              label: locationResult.label || text,
+              name: text,
+              confidence: locationResult.confidence || 0.9,
+              source: locationResult.source || 'geocoder'
+            }
           }
-        }))
+        ]
       };
-      geocodeCache.set(cacheKey, formattedData);
       return res.status(200).json(formattedData);
     }
 

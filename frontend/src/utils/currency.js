@@ -216,3 +216,137 @@ export function estimateStopCost(poiOrName, trip) {
     case 'JPY': default: return 500;
   }
 }
+
+export const SUPPORTED_CURRENCIES = [
+  { code: 'INR', symbol: '₹', label: 'INR (₹)', name: 'Indian Rupee' },
+  { code: 'USD', symbol: '$', label: 'USD ($)', name: 'US Dollar' },
+  { code: 'EUR', symbol: '€', label: 'EUR (€)', name: 'Euro' },
+  { code: 'GBP', symbol: '£', label: 'GBP (£)', name: 'British Pound' },
+  { code: 'JPY', symbol: '¥', label: 'JPY (¥)', name: 'Japanese Yen' },
+  { code: 'AUD', symbol: 'A$', label: 'AUD (A$)', name: 'Australian Dollar' },
+  { code: 'CAD', symbol: 'CA$', label: 'CAD (CA$)', name: 'Canadian Dollar' },
+  { code: 'SGD', symbol: 'S$', label: 'SGD (S$)', name: 'Singapore Dollar' },
+  { code: 'THB', symbol: '฿', label: 'THB (฿)', name: 'Thai Baht' },
+  { code: 'AED', symbol: 'AED', label: 'AED', name: 'UAE Dirham' },
+  { code: 'CHF', symbol: 'CHF', label: 'CHF', name: 'Swiss Franc' },
+  { code: 'KRW', symbol: '₩', label: 'KRW (₩)', name: 'South Korean Won' },
+  { code: 'IDR', symbol: 'Rp', label: 'IDR (Rp)', name: 'Indonesian Rupiah' },
+  { code: 'VND', symbol: '₫', label: 'VND (₫)', name: 'Vietnamese Dong' }
+];
+
+/**
+ * Returns realistic tiered daily budget options for a given currency.
+ */
+export function getBudgetTiers(currencyCode = 'USD') {
+  switch (currencyCode) {
+    case 'INR':
+      return [
+        '₹2,000–3,500 (budget)',
+        '₹3,500–6,000 (moderate)',
+        '₹6,000–10,000 (comfort)',
+        '₹10,000+ (luxury)'
+      ];
+    case 'JPY':
+      return [
+        '¥5,000–8,000 (budget)',
+        '¥8,000–15,000 (moderate)',
+        '¥15,000–25,000 (comfort)',
+        '¥25,000+ (luxury)'
+      ];
+    case 'EUR':
+      return [
+        '€30–50 (budget)',
+        '€50–80 (moderate)',
+        '€80–130 (comfort)',
+        '€130+ (luxury)'
+      ];
+    case 'GBP':
+      return [
+        '£25–45 (budget)',
+        '£45–75 (moderate)',
+        '£75–120 (comfort)',
+        '£120+ (luxury)'
+      ];
+    case 'AUD':
+      return [
+        'A$45–75 (budget)',
+        'A$75–120 (moderate)',
+        'A$120–180 (comfort)',
+        'A$180+ (luxury)'
+      ];
+    case 'CAD':
+      return [
+        'CA$40–70 (budget)',
+        'CA$70–110 (moderate)',
+        'CA$110–170 (comfort)',
+        'CA$170+ (luxury)'
+      ];
+    case 'SGD':
+      return [
+        'S$40–70 (budget)',
+        'S$70–110 (moderate)',
+        'S$110–170 (comfort)',
+        'S$170+ (luxury)'
+      ];
+    case 'THB':
+      return [
+        '฿1,000–1,800 (budget)',
+        '฿1,800–3,000 (moderate)',
+        '฿3,000–5,000 (comfort)',
+        '฿5,000+ (luxury)'
+      ];
+    case 'AED':
+      return [
+        'AED 120–200 (budget)',
+        'AED 200–350 (moderate)',
+        'AED 350–600 (comfort)',
+        'AED 600+ (luxury)'
+      ];
+    case 'CHF':
+      return [
+        'CHF 40–70 (budget)',
+        'CHF 70–120 (moderate)',
+        'CHF 120–180 (comfort)',
+        'CHF 180+ (luxury)'
+      ];
+    case 'KRW':
+      return [
+        '₩40,000–70,000 (budget)',
+        '₩70,000–120,000 (moderate)',
+        '₩120,000–200,000 (comfort)',
+        '₩200,000+ (luxury)'
+      ];
+    case 'IDR':
+      return [
+        'Rp 450,000–750,000 (budget)',
+        'Rp 750,000–1,500,000 (moderate)',
+        'Rp 1,500,000–2,500,000 (comfort)',
+        'Rp 2,500,000+ (luxury)'
+      ];
+    case 'VND':
+      return [
+        '₫700,000–1,200,000 (budget)',
+        '₫1,200,000–2,000,000 (moderate)',
+        '₫2,000,000–3,500,000 (comfort)',
+        '₫3,500,000+ (luxury)'
+      ];
+    case 'USD':
+    default:
+      return [
+        '$30–50 (budget)',
+        '$50–80 (moderate)',
+        '$80–120 (comfort)',
+        '$120+ (luxury)'
+      ];
+  }
+}
+
+/**
+ * Formats a numerical amount with the appropriate currency symbol.
+ */
+export function formatCurrency(amount, currencyCode = 'USD') {
+  const item = SUPPORTED_CURRENCIES.find(c => c.code === currencyCode) || CURRENCY_MAP.find(c => c.code === currencyCode);
+  const symbol = item ? item.symbol : '$';
+  const num = Number(String(amount).replace(/[^\d.]/g, '')) || 0;
+  return `${symbol}${num.toLocaleString()}`;
+}

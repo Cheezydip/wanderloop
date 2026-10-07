@@ -145,19 +145,26 @@ export default function ItineraryPanel() {
     const baseStop = targetDay?.stops?.[targetDay?.stops?.length - 1] || targetDay?.stops?.[0];
     const baseLat = baseStop?.lat || state.mapCenter?.lat || 35.6895;
     const baseLng = baseStop?.lng || state.mapCenter?.lng || 139.6917;
+    const destination = state.trip?.destination || '';
 
-    let stopLat = baseLat + (Math.random() - 0.5) * 0.005;
-    let stopLng = baseLng + (Math.random() - 0.5) * 0.005;
+    let stopLat = baseLat;
+    let stopLng = baseLng;
 
     try {
-      const res = await fetch(`/api/geocode?text=${encodeURIComponent(stopTitle)}`);
+      const url = `/api/geocode?text=${encodeURIComponent(stopTitle)}&destination=${encodeURIComponent(destination)}&lat=${baseLat}&lng=${baseLng}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         if (data.features && data.features.length > 0) {
           const [geoLng, geoLat] = data.features[0].geometry.coordinates;
           if (typeof geoLat === 'number' && typeof geoLng === 'number' && !isNaN(geoLat) && !isNaN(geoLng)) {
-            stopLat = geoLat;
-            stopLng = geoLng;
+            const dist = haversine(baseLat, baseLng, geoLat, geoLng);
+            if (dist <= 350) {
+              stopLat = geoLat;
+              stopLng = geoLng;
+            } else {
+              console.warn(`[Itinerary]: Rejecting geocode match for "${stopTitle}" (${dist.toFixed(1)}km from trip location)`);
+            }
           }
         }
       }
@@ -177,6 +184,8 @@ export default function ItineraryPanel() {
     };
 
     dispatch({ type: 'ADD_STOP', payload: { dayId: addStopModalDayId, stop: newStop } });
+    dispatch({ type: 'SELECT_STOP', payload: newStop.id });
+    dispatch({ type: 'SET_MAP_CENTER', payload: { lat: stopLat, lng: stopLng } });
     setAddStopModalDayId(null);
   };
 
@@ -633,29 +642,19 @@ export default function ItineraryPanel() {
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {(() => {
-                          const dayHotelIds = state.selectedHomestaysByDay?.[day.id] || [];
-                          const dayHotels = (state.homestays || []).filter(h => dayHotelIds.includes(h.id));
-                          const dayStopsWithHotel = [
-                            ...dayHotels.map(h => ({ name: `${h.name} (Hotel)`, lat: h.lat, lng: h.lng })),
-                            ...(day.stops || [])
-                          ];
-                          return (
-                            <a
-                              href={buildGoogleMapsUrl(dayStopsWithHotel, 'transit', state.trip?.title, state.trip?.destination)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="p-1 rounded hover:bg-white/10 text-muted hover:text-accent transition-colors flex items-center gap-1 text-[10px]"
-                              title={`Open Day ${day.dayNumber} route in Google Maps`}
-                            >
-                              <svg className="w-3 h-3 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-                              </svg>
-                              <span className="hidden sm:inline text-[9px]">Maps</span>
-                            </a>
-                          );
-                        })()}
+                        <a
+                          href={buildGoogleMapsUrl(day.stops || [], 'driving', state.trip?.title, state.trip?.destination)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1 rounded hover:bg-white/10 text-muted hover:text-accent transition-colors flex items-center gap-1 text-[10px]"
+                          title={`Open Day ${day.dayNumber} route in Google Maps`}
+                        >
+                          <svg className="w-3 h-3 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                          </svg>
+                          <span className="hidden sm:inline text-[9px]">Maps</span>
+                        </a>
                         <span className="font-mono text-[10px]" style={{ color: 'var(--muted)' }}>
                           {currencySymbol}{dayCost.toLocaleString()}
                         </span>
@@ -1035,6 +1034,25 @@ export default function ItineraryPanel() {
                             onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-dim)'; }}
                           >
                             {optimizingDayId === day.id ? 'Optimizing...' : 'Re-optimize'}
+                          </button>
+                        </div>
+
+                        {/* Add / Remove Day Actions */}
+                        <div className="pt-1.5 flex gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              dispatch({ type: 'REMOVE_DAY', payload: day.id });
+                            }}
+                            className="flex-1 py-1.5 rounded-lg border border-red-500/20 text-[9px] font-semibold text-red-400 hover:bg-red-500/10 transition-all cursor-pointer"
+                          >
+                            - Remove Day
+                          </button>
+                          <button
+                            onClick={() => dispatch({ type: 'ADD_DAY', payload: { insertAfterId: day.id } })}
+                            className="flex-1 py-1.5 rounded-lg border border-emerald-500/20 text-[9px] font-semibold text-emerald-500 hover:bg-emerald-500/10 transition-all cursor-pointer"
+                          >
+                            + Add Day
                           </button>
                         </div>
                       </div>

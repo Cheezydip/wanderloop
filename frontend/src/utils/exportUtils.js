@@ -99,13 +99,6 @@ export function getAllStopsFromTrip(
 export function formatStopForMaps(stop, tripTitle = '', destination = '') {
   if (!stop) return '';
 
-  const lat = parseCoordinate(stop.lat);
-  const lng = parseCoordinate(stop.lng);
-
-  if (lat !== null && lng !== null) {
-    return `${lat},${lng}`;
-  }
-
   if (stop.name && typeof stop.name === 'string' && stop.name.trim().length > 0) {
     let cleanName = stop.name.trim().replace(/\s*\(Hotel\)/gi, '').replace(/\(([^)]+)\)/g, '$1');
     const city = destination || (tripTitle ? tripTitle.split(' ')[0] : '');
@@ -113,6 +106,13 @@ export function formatStopForMaps(stop, tripTitle = '', destination = '') {
       cleanName += `, ${city}`;
     }
     return encodeURIComponent(cleanName);
+  }
+
+  const lat = parseCoordinate(stop.lat);
+  const lng = parseCoordinate(stop.lng);
+
+  if (lat !== null && lng !== null) {
+    return `${lat},${lng}`;
   }
 
   return '';
@@ -126,27 +126,29 @@ export function buildGoogleMapsUrl(stops = [], travelMode = 'transit', tripTitle
   const validStops = stops.filter(s => s && (s.name || parseCoordinate(s.lat) !== null));
   if (validStops.length === 0) return 'https://www.google.com/maps';
 
-  const validTravelMode = ['transit', 'walking', 'driving', 'bicycling'].includes(travelMode) ? travelMode : 'transit';
-
   if (validStops.length === 1) {
     return buildSinglePlaceGoogleMapsUrl(validStops[0], tripTitle, destination);
   }
 
   const formatRouteStop = (s) => {
-    const lat = parseCoordinate(s.lat);
-    const lng = parseCoordinate(s.lng);
-    if (lat !== null && lng !== null) {
-      return `${lat},${lng}`;
-    }
     return formatStopForMaps(s, tripTitle, destination);
   };
 
   const originParam = formatRouteStop(validStops[0]);
   const destParam = formatRouteStop(validStops[validStops.length - 1]);
-
-  let url = `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=${validTravelMode}`;
-
   const intermediateStops = validStops.slice(1, validStops.length - 1);
+
+  // CRITICAL GOOGLE MAPS API REQUIREMENT:
+  // Google Maps Directions URLs ('/dir/?api=1') DO NOT support waypoints when 'travelmode=transit'.
+  // If 'travelmode=transit' is passed with waypoints, Google Maps silently discards all intermediate waypoints and shows only origin + destination.
+  // For multi-stop routes with intermediate waypoints, we use 'walking' or 'driving' so Google Maps displays ALL stops on the map.
+  let effectiveTravelMode = ['walking', 'driving', 'bicycling'].includes(travelMode) ? travelMode : 'driving';
+  if (travelMode === 'transit' && intermediateStops.length === 0) {
+    effectiveTravelMode = 'transit';
+  }
+
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=${effectiveTravelMode}`;
+
   if (intermediateStops.length > 0) {
     const cappedWaypoints = intermediateStops.slice(0, 23);
     const waypointsParam = cappedWaypoints.map(formatRouteStop).filter(Boolean).join('%7C');
@@ -202,24 +204,21 @@ export function buildAppleMapsUrl(stops = [], tripTitle = '', destination = '') 
 export function buildSinglePlaceGoogleMapsUrl(stop, tripTitle = '', destination = '') {
   if (!stop) return 'https://www.google.com/maps';
 
-  const lat = parseCoordinate(stop.lat);
-  const lng = parseCoordinate(stop.lng);
-  const hasCoords = lat !== null && lng !== null;
   let cleanName = stop.name ? stop.name.trim().replace(/\s*\(Hotel\)/gi, '').replace(/\(([^)]+)\)/g, '$1') : '';
-
-  if (hasCoords) {
-    if (cleanName) {
-      return `https://www.google.com/maps/place/${encodeURIComponent(cleanName)}/@${lat},${lng},17z`;
-    }
-    return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-  }
+  const city = destination || (tripTitle ? tripTitle.split(' ')[0] : '');
 
   if (cleanName) {
-    const city = destination || (tripTitle ? tripTitle.split(' ')[0] : '');
+    let fullQuery = cleanName;
     if (city && !cleanName.toLowerCase().includes(city.toLowerCase())) {
-      cleanName += `, ${city}`;
+      fullQuery += `, ${city}`;
     }
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cleanName)}`;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullQuery)}`;
+  }
+
+  const lat = parseCoordinate(stop.lat);
+  const lng = parseCoordinate(stop.lng);
+  if (lat !== null && lng !== null) {
+    return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
   }
 
   return 'https://www.google.com/maps';

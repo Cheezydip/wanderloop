@@ -16,35 +16,33 @@ const BOUNDS = { minLat: 35.61, maxLat: 35.73, minLng: 139.68, maxLng: 139.83 };
 const SVG_W = 500;
 const SVG_H = 400;
 
-const getCartoStyle = (theme) => {
+const getMapStyle = (theme) => {
   const isLight = theme === 'sunset';
-  const styleType = isLight ? 'light_all' : 'dark_all';
-  return {
-    version: 8,
-    sources: {
-      'carto-raster-tiles': {
-        type: 'raster',
-        tiles: [
-          `https://a.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`,
-          `https://b.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`,
-          `https://c.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`,
-          `https://d.basemaps.cartocdn.com/${styleType}/{z}/{x}/{y}.png`
-        ],
-        tileSize: 256,
-        attribution: '© OpenStreetMap contributors, © CARTO'
-      }
-    },
-    layers: [
-      {
-        id: 'carto-raster-layer',
-        type: 'raster',
-        source: 'carto-raster-tiles',
-        minzoom: 0,
-        maxzoom: 20
-      }
-    ]
-  };
+  return isLight
+    ? 'https://tiles.openfreemap.org/styles/positron'
+    : 'https://tiles.openfreemap.org/styles/dark';
 };
+
+const getOsmRasterFallbackStyle = () => ({
+  version: 8,
+  sources: {
+    'osm-raster-tiles': {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors'
+    }
+  },
+  layers: [
+    {
+      id: 'osm-raster-layer',
+      type: 'raster',
+      source: 'osm-raster-tiles',
+      minzoom: 0,
+      maxzoom: 19
+    }
+  ]
+});
 
 export default function MapPanel() {
   const { state, dispatch } = useTrip();
@@ -399,7 +397,11 @@ export default function MapPanel() {
     
     let allCoordinates = [];
     if (mapLayer === 'stops') {
-      state.trip?.days?.forEach(day => {
+      const daysToFit = highlightedDayId
+        ? state.trip?.days?.filter(d => d.id === highlightedDayId)
+        : state.trip?.days;
+
+      daysToFit?.forEach(day => {
         day.stops?.forEach(s => {
           const lat = parseFloat(s.lat);
           const lng = parseFloat(s.lng);
@@ -425,8 +427,8 @@ export default function MapPanel() {
       new maplibregl.LngLatBounds(allCoordinates[0], allCoordinates[0])
     );
 
-    map.fitBounds(bounds, { padding: 50, maxZoom: 15 });
-  }, [state.trip, state.homestays, mapLayer]);
+    map.fitBounds(bounds, { padding: 60, maxZoom: 15 });
+  }, [state.trip, state.homestays, mapLayer, highlightedDayId]);
 
   const handleFitTrip = () => {
     if (!useMockMap && mapRef.current) {
@@ -600,7 +602,7 @@ export default function MapPanel() {
     try {
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: getCartoStyle(theme),
+        style: getMapStyle(theme),
         center: [139.75, 35.68],
         zoom: 11,
         attributionControl: false,
@@ -621,6 +623,11 @@ export default function MapPanel() {
 
       map.on('error', (e) => {
         console.warn('MapLibre notice:', e?.error?.message || e);
+        // If vector style failed to load, gracefully fall back to OSM raster
+        if (e?.error?.message?.includes('tiles.openfreemap.org')) {
+          console.log('[MapPanel]: Falling back to OpenStreetMap raster tiles...');
+          map.setStyle(getOsmRasterFallbackStyle());
+        }
       });
 
       const onMapClick = () => {
@@ -703,7 +710,7 @@ export default function MapPanel() {
     }
     if (mapRef.current && !useMockMap) {
       const map = mapRef.current;
-      map.setStyle(getCartoStyle(theme));
+      map.setStyle(getMapStyle(theme));
       // After setStyle, all sources/layers are wiped. Force re-sync by
       // updating routesData identity so the syncMapData effect re-fires.
       map.once('styledata', () => {

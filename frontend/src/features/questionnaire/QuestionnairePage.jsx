@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useTrip } from '../../context/TripContext';
 import { useTheme } from '../../context/ThemeContext';
 import ThemeSlider from '../../components/ThemeSlider';
+import { getTripCurrency, getBudgetTiers, SUPPORTED_CURRENCIES } from '../../utils/currency';
 
 /* ═══════════════════════════════════════════════════
    QUESTIONNAIRE PAGE
@@ -134,10 +135,35 @@ export default function QuestionnairePage() {
   const textareaRef = useRef(null);
   const containerRef = useRef(null);
 
-  const isLastQuestion = currentStep === QUESTIONS.length - 1;
-  const isSummary = currentStep === QUESTIONS.length;
-  const currentQ = QUESTIONS[currentStep];
-  const progress = ((currentStep + 1) / TOTAL_STEPS) * 100;
+  // Dynamic currency detection & custom budget support
+  const detectedCurrency = getTripCurrency({ destination: state.questionnairePrompt });
+  const [selectedCurrency, setSelectedCurrency] = useState(detectedCurrency.code);
+  const [isCustomBudget, setIsCustomBudget] = useState(false);
+  const [customBudgetInput, setCustomBudgetInput] = useState('');
+
+  // Keep selectedCurrency in sync if questionnaire prompt changes
+  useEffect(() => {
+    const cur = getTripCurrency({ destination: state.questionnairePrompt });
+    setSelectedCurrency(cur.code);
+  }, [state.questionnairePrompt]);
+
+  const activeCurrencyInfo = SUPPORTED_CURRENCIES.find(c => c.code === selectedCurrency) || detectedCurrency;
+  const dynamicBudgetOptions = getBudgetTiers(selectedCurrency);
+
+  const questions = QUESTIONS.map(q => {
+    if (q.key === 'budget') {
+      return {
+        ...q,
+        options: dynamicBudgetOptions
+      };
+    }
+    return q;
+  });
+
+  const isLastQuestion = currentStep === questions.length - 1;
+  const isSummary = currentStep === questions.length;
+  const currentQ = questions[currentStep];
+  const progress = ((currentStep + 1) / (questions.length + 1)) * 100;
 
   // Focus textarea when it's the active step
   useEffect(() => {
@@ -148,7 +174,10 @@ export default function QuestionnairePage() {
 
   function handleSelect(key, value) {
     if (isAnimating) return;
-    const q = QUESTIONS.find(q => q.key === key);
+    if (key === 'budget') {
+      setIsCustomBudget(false);
+    }
+    const q = questions.find(q => q.key === key);
     if (q?.type === 'multi') {
       const current = answers[key] || [];
       const updated = current.includes(value)
@@ -160,10 +189,26 @@ export default function QuestionnairePage() {
     }
   }
 
+  function handleCustomBudgetChange(val) {
+    const clean = val.replace(/[^\d]/g, '');
+    setCustomBudgetInput(clean);
+    if (Number(clean) > 0) {
+      setAnswers(prev => ({
+        ...prev,
+        budget: `${activeCurrencyInfo.symbol}${Number(clean).toLocaleString()}/day`
+      }));
+    } else {
+      setAnswers(prev => ({ ...prev, budget: '' }));
+    }
+  }
+
   function canProceed() {
     if (isSummary) return true;
     if (!currentQ) return false;
     if (currentQ.optional) return true;
+    if (currentQ.key === 'budget' && isCustomBudget) {
+      return Number(customBudgetInput) > 0;
+    }
     if (currentQ.type === 'multi') return (answers[currentQ.key] || []).length > 0;
     return !!answers[currentQ.key];
   }
@@ -222,7 +267,7 @@ export default function QuestionnairePage() {
   }
 
   // Summary data
-  const summaryItems = QUESTIONS.filter(q => !q.optional || answers[q.key]).map(q => ({
+  const summaryItems = questions.filter(q => !q.optional || answers[q.key]).map(q => ({
     label: q.question.replace('?', ''),
     value: Array.isArray(answers[q.key]) ? answers[q.key].join(', ') : (answers[q.key] || '—'),
     key: q.key,
@@ -293,6 +338,34 @@ export default function QuestionnairePage() {
               <h2 className="questionnaire-question">{currentQ.question}</h2>
               <p className="questionnaire-subtitle">{currentQ.subtitle}</p>
 
+              {/* Currency Selector for Budget Step */}
+              {currentQ.key === 'budget' && (
+                <div className="questionnaire-currency-bar">
+                  <span className="currency-bar-label">Budget Currency:</span>
+                  <div className="currency-select-container">
+                    <select
+                      className="questionnaire-currency-select"
+                      value={selectedCurrency}
+                      onChange={(e) => {
+                        const newCode = e.target.value;
+                        setSelectedCurrency(newCode);
+                        setIsCustomBudget(false);
+                        setAnswers(prev => ({ ...prev, budget: '' }));
+                      }}
+                    >
+                      {SUPPORTED_CURRENCIES.map(curr => (
+                        <option key={curr.code} value={curr.code}>
+                          {curr.label} — {curr.name}
+                        </option>
+                      ))}
+                    </select>
+                    <svg className="currency-select-arrow" width="12" height="12" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+
               {/* Answer options */}
               <div className="questionnaire-options">
                 {currentQ.type === 'textarea' ? (
@@ -309,7 +382,7 @@ export default function QuestionnairePage() {
                     {currentQ.options.map((opt) => {
                       const isSelected = currentQ.type === 'multi'
                         ? (answers[currentQ.key] || []).includes(opt)
-                        : answers[currentQ.key] === opt;
+                        : (!isCustomBudget && answers[currentQ.key] === opt);
                       return (
                         <ChipButton
                           key={opt}
@@ -319,6 +392,46 @@ export default function QuestionnairePage() {
                         />
                       );
                     })}
+
+                    {/* Custom price chip for budget question */}
+                    {currentQ.key === 'budget' && (
+                      <ChipButton
+                        key="custom-budget-option"
+                        label="+ Custom price"
+                        selected={isCustomBudget}
+                        onClick={() => {
+                          setIsCustomBudget(true);
+                          if (Number(customBudgetInput) > 0) {
+                            setAnswers(prev => ({
+                              ...prev,
+                              budget: `${activeCurrencyInfo.symbol}${Number(customBudgetInput).toLocaleString()}/day`
+                            }));
+                          } else {
+                            setAnswers(prev => ({ ...prev, budget: '' }));
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Custom price input field */}
+                {currentQ.key === 'budget' && isCustomBudget && (
+                  <div className="questionnaire-custom-budget-box">
+                    <label className="custom-budget-label">Enter your daily budget amount:</label>
+                    <div className="custom-budget-input-group">
+                      <span className="custom-budget-symbol-tag">{activeCurrencyInfo.symbol}</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="custom-budget-text-input"
+                        placeholder="e.g. 5000"
+                        value={customBudgetInput}
+                        onChange={(e) => handleCustomBudgetChange(e.target.value)}
+                        autoFocus
+                      />
+                      <span className="custom-budget-suffix-tag">/ day</span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -726,6 +839,103 @@ export default function QuestionnairePage() {
         .questionnaire-textarea::placeholder {
           color: var(--muted);
           opacity: 0.6;
+        }
+
+        /* ═══ CURRENCY BAR ═══ */
+        .questionnaire-currency-bar {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 24px;
+          padding: 6px 14px;
+          background: var(--surface-2);
+          border: 1px solid var(--border);
+          border-radius: 20px;
+          font-size: 13px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        }
+        .currency-bar-label {
+          color: var(--muted);
+          font-weight: 500;
+        }
+        .currency-select-container {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+        }
+        .questionnaire-currency-select {
+          appearance: none;
+          -webkit-appearance: none;
+          background: transparent;
+          border: none;
+          color: var(--accent);
+          font-weight: 700;
+          font-size: 13px;
+          padding-right: 20px;
+          cursor: pointer;
+          outline: none;
+        }
+        .questionnaire-currency-select option {
+          background: var(--surface);
+          color: var(--text);
+          font-weight: 500;
+        }
+        .currency-select-arrow {
+          position: absolute;
+          right: 2px;
+          pointer-events: none;
+          color: var(--accent);
+        }
+
+        /* ═══ CUSTOM BUDGET BOX ═══ */
+        .questionnaire-custom-budget-box {
+          margin-top: 18px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          animation: q-card-enter 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .custom-budget-label {
+          font-size: 13px;
+          color: var(--muted);
+          font-weight: 500;
+        }
+        .custom-budget-input-group {
+          display: inline-flex;
+          align-items: center;
+          background: var(--surface);
+          border: 1.5px solid var(--accent);
+          border-radius: 12px;
+          padding: 6px 14px;
+          box-shadow: 0 0 16px var(--accent-glow);
+          gap: 6px;
+        }
+        .custom-budget-symbol-tag {
+          font-weight: 700;
+          font-size: 16px;
+          color: var(--accent);
+        }
+        .custom-budget-text-input {
+          background: transparent;
+          border: none;
+          outline: none;
+          color: var(--text);
+          font-family: inherit;
+          font-size: 16px;
+          font-weight: 600;
+          width: 130px;
+          text-align: left;
+        }
+        .custom-budget-text-input::placeholder {
+          color: var(--muted);
+          opacity: 0.5;
+        }
+        .custom-budget-suffix-tag {
+          font-size: 13px;
+          color: var(--muted);
+          font-weight: 500;
         }
 
         /* ═══ NAVIGATION ═══ */
