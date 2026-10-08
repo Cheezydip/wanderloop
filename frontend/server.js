@@ -36,7 +36,9 @@ const mimeTypes = {
   '.webp': 'image/webp'
 };
 
-const server = http.createServer((req, res) => {
+const BACKEND_URL = (process.env.BACKEND_URL || process.env.VITE_API_URL || 'https://wanderloop.onrender.com').replace(/\/+$/, '');
+
+const server = http.createServer(async (req, res) => {
   // CORS & Security headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -47,6 +49,43 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', service: 'wanderloop-frontend' }));
     return;
+  }
+
+  // Reverse proxy /api requests to backend
+  if (cleanUrl.startsWith('/api')) {
+    try {
+      const targetUrl = `${BACKEND_URL}${req.url}`;
+      const forwardHeaders = { ...req.headers };
+      delete forwardHeaders.host;
+
+      const bodyChunks = [];
+      for await (const chunk of req) {
+        bodyChunks.push(chunk);
+      }
+      const hasBody = !['GET', 'HEAD'].includes(req.method?.toUpperCase());
+      const body = hasBody && bodyChunks.length > 0 ? Buffer.concat(bodyChunks) : undefined;
+
+      const upstreamRes = await fetch(targetUrl, {
+        method: req.method,
+        headers: forwardHeaders,
+        body
+      });
+
+      const responseHeaders = {};
+      upstreamRes.headers.forEach((val, key) => {
+        responseHeaders[key] = val;
+      });
+
+      res.writeHead(upstreamRes.status, responseHeaders);
+      const resBuffer = Buffer.from(await upstreamRes.arrayBuffer());
+      res.end(resBuffer);
+      return;
+    } catch (proxyErr) {
+      console.error('[server]: Proxy error to backend:', proxyErr.message);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Backend gateway error', details: proxyErr.message }));
+      return;
+    }
   }
 
   let safePath = path.normalize(cleanUrl).replace(/^(\.\.[/\\])+/, '');
