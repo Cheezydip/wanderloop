@@ -57,6 +57,7 @@ const server = http.createServer(async (req, res) => {
       const targetUrl = `${BACKEND_URL}${req.url}`;
       const forwardHeaders = { ...req.headers };
       delete forwardHeaders.host;
+      delete forwardHeaders['accept-encoding'];
 
       const bodyChunks = [];
       for await (const chunk of req) {
