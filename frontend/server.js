@@ -71,13 +71,29 @@ const server = http.createServer(async (req, res) => {
         body
       });
 
+      const resBuffer = Buffer.from(await upstreamRes.arrayBuffer());
+
       const responseHeaders = {};
       upstreamRes.headers.forEach((val, key) => {
-        responseHeaders[key] = val;
+        const lowerKey = key.toLowerCase();
+        // Remove hop-by-hop and compression headers since resBuffer is already decompressed
+        if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(lowerKey)) {
+          responseHeaders[key] = val;
+        }
       });
 
+      // Forward Set-Cookie properly
+      if (typeof upstreamRes.headers.getSetCookie === 'function') {
+        const cookies = upstreamRes.headers.getSetCookie();
+        if (cookies && cookies.length > 0) {
+          responseHeaders['set-cookie'] = cookies;
+        }
+      }
+
+      // Explicitly set the actual uncompressed buffer length
+      responseHeaders['content-length'] = resBuffer.length;
+
       res.writeHead(upstreamRes.status, responseHeaders);
-      const resBuffer = Buffer.from(await upstreamRes.arrayBuffer());
       res.end(resBuffer);
       return;
     } catch (proxyErr) {
