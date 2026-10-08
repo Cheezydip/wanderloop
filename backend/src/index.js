@@ -14,10 +14,11 @@ import chatRouter from './routes/chat.js';
 import authRouter from './routes/auth.js';
 import tripsRouter from './routes/trips.js';
 
-// Load environment variables from project root .env - triggers watch key reload
+// Load environment variables from project root .env
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.resolve(__dirname, '../../.env'), override: true });
+const providerPort = process.env.PORT;
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 // Connect to MongoDB Atlas / Local Database
 connectDB();
@@ -37,7 +38,7 @@ if (apiKey && apiKey.startsWith('eyJ')) {
 }
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = providerPort || process.env.PORT || 3001;
 
 // CORS setup
 const corsOptions = {
@@ -64,6 +65,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
 // Routes
+app.get('/', (_req, res) => {
+  res.status(200).json({ status: 'ok', service: 'Wanderloop Backend' });
+});
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 app.use('/api', healthRouter);
 app.use('/api', routingRouter);
 app.use('/api', geocodingRouter);
@@ -73,6 +81,6 @@ app.use('/api', chatRouter);
 app.use('/api', authRouter);
 app.use('/api', tripsRouter);
 
-app.listen(PORT, () => {
-  console.log(`[server]: Wanderloop backend listening at http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[server]: Wanderloop backend listening at http://0.0.0.0:${PORT}`);
 });
