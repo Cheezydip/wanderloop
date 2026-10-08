@@ -2,6 +2,8 @@
  * Route Service to interact with the backend OSRM routing routes.
  */
 
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
 // Helper to make POST requests
 async function postData(url = '', data = {}) {
   const response = await fetch(url, {
@@ -23,7 +25,7 @@ async function postData(url = '', data = {}) {
  * @param {string} profile 'foot-walking' | 'driving-car'
  */
 export async function fetchRoute(coordinates, profile = 'foot-walking') {
-  return postData('/api/route', { coordinates, profile });
+  return postData(`${API_BASE}/api/route`, { coordinates, profile });
 }
 
 /**
@@ -32,7 +34,7 @@ export async function fetchRoute(coordinates, profile = 'foot-walking') {
  * @param {string} profile 'foot-walking' | 'driving-car'
  */
 export async function fetchDistanceTable(coordinates, profile = 'foot-walking') {
-  return postData('/api/route/table', { coordinates, profile });
+  return postData(`${API_BASE}/api/route/table`, { coordinates, profile });
 }
 
 /**
@@ -41,5 +43,6 @@ export async function fetchDistanceTable(coordinates, profile = 'foot-walking') 
  * @param {string} profile 'foot-walking' | 'driving-car'
  */
 export async function fetchOptimizedOrder(coordinates, profile = 'foot-walking') {
-  return postData('/api/route/optimize', { coordinates, profile });
+  return postData(`${API_BASE}/api/route/optimize`, { coordinates, profile });
 }
+
