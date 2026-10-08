@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev -w frontend\" \"npm run dev -w backend\" \"npm start --prefix ../wanderloop-ai-service\"",
     "build": "npm run build -w frontend && npm run build -w backend && node -e \"const fs=require('fs'); fs.cpSync('frontend/dist', 'dist', {recursive:true});\"",
+    "start": "node frontend/server.js",
     "lint": "npm run lint -w frontend && npm run lint -w backend",
     "format": "npm run format -w frontend && npm run format -w backend"
   },
