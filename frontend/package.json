@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node -e \"const fs=require('fs'); ['build', 'out'].forEach(d => fs.cpSync('dist', d, {recursive:true}));\"",
+    "build": "vite build && node -e \"const fs=require('fs'); ['build', 'out'].forEach(d => fs.cpSync('dist', d, {recursive:true}));\" && node fix-permissions.js",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{js,jsx,css,json}\"",
     "preview": "vite preview",
