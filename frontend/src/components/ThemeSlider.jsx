@@ -68,10 +68,13 @@ export default function ThemeSlider({ size = 'medium' }) {
     scene.add(pointLight);
 
     let animationFrameId;
-    const clock = new THREE.Clock();
+    let lastTime = performance.now();
 
     const animateScene = () => {
-      const delta = clock.getDelta();
+      const now = performance.now();
+      const delta = (now - lastTime) / 1000;
+      lastTime = now;
+
       sphere.rotation.y += delta * 0.8;
       sphere.rotation.x += delta * 0.3;
       ring.rotation.z += delta * 0.6;

@@ -102,7 +102,7 @@ export default function ParticleCTA({ theme = 'dark' }) {
 
     // Animate
     let animId;
-    const timer = new THREE.Clock();
+    const startAnimTime = performance.now();
 
     function animate() {
       animId = requestAnimationFrame(animate);
@@ -112,7 +112,7 @@ export default function ParticleCTA({ theme = 'dark' }) {
         return;
       }
 
-      const elapsed = timer.getElapsedTime();
+      const elapsed = (performance.now() - startAnimTime) / 1000;
 
       // Move particles
       for (let i = 0; i < PARTICLE_COUNT; i++) {

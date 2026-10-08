@@ -642,6 +642,18 @@ export default function MapPanel() {
       };
       map.on('style.load', onStyleLoad);
 
+      // Handle missing style pattern images (e.g. wood-pattern, forest patterns)
+      map.on('styleimagemissing', (e) => {
+        const id = e.id;
+        if (!map.hasImage(id)) {
+          map.addImage(id, {
+            width: 1,
+            height: 1,
+            data: new Uint8Array([0, 0, 0, 0])
+          });
+        }
+      });
+
       const onMapLoad = () => {
         if (syncMapDataRef.current) {
           syncMapDataRef.current();

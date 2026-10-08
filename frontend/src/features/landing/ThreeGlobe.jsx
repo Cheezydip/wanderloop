@@ -372,7 +372,7 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
     resizeObserver.observe(container);
 
     /* ─── Animation Timeline States ─── */
-    const timer = new THREE.Clock();
+    const startAnimTime = performance.now();
     let animId;
     let zoomProgress = loadingRef.current ? 0.0 : 1.0;
     
@@ -383,7 +383,7 @@ export default function ThreeGlobe({ theme = 'dark', loading = true }) {
       if (stateRef.current.destroyed) return;
       animId = requestAnimationFrame(animate);
 
-      const elapsed = timer.getElapsedTime();
+      const elapsed = (performance.now() - startAnimTime) / 1000;
 
       // Mouse tracking smoothing
       mouse.x += (mouse.targetX - mouse.x) * 0.05;
