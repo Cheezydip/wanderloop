@@ -2,11 +2,22 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distDir = path.resolve(__dirname, 'dist');
 const port = parseInt(process.env.PORT || '3000', 10);
+
+// Auto-build fallback if dist/ does not exist yet
+if (!fs.existsSync(path.join(distDir, 'index.html'))) {
+  console.log('⚡ dist/index.html not found, executing vite build on startup...');
+  try {
+    execSync('npx vite build', { stdio: 'inherit' });
+  } catch (err) {
+    console.error('Startup build failed:', err.message);
+  }
+}
 
 const mimeTypes = {
   '.html': 'text/html; charset=UTF-8',
@@ -31,6 +42,13 @@ const server = http.createServer((req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
   const cleanUrl = (req.url || '/').split('?')[0];
+
+  if (cleanUrl === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'wanderloop-frontend' }));
+    return;
+  }
+
   let safePath = path.normalize(cleanUrl).replace(/^(\.\.[/\\])+/, '');
   let filePath = path.join(distDir, safePath === '/' ? 'index.html' : safePath);
 
