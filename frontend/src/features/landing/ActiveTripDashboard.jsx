@@ -73,7 +73,7 @@ export default function ActiveTripDashboard({ onTripClick }) {
 
   useEffect(() => {
     if (user) {
-      fetch('/api/trips')
+      fetch((import.meta.env.VITE_API_URL || '') + '/api/trips')
         .then(res => {
           if (!res.ok) throw new Error('Failed to fetch');
           return res.json();
@@ -237,7 +237,7 @@ export default function ActiveTripDashboard({ onTripClick }) {
                   if (hasUserList) {
                     if (selectedRawItem.isSavedTrip) {
                       try {
-                        const res = await fetch(`/api/trips/${selectedRawItem.tripId}`, { method: 'DELETE' });
+                        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/trips/${selectedRawItem.tripId}`, { method: 'DELETE' });
                         if (res.ok) {
                           setSavedTrips(prev => prev.filter(t => t.tripId !== selectedRawItem.tripId && t._id !== selectedRawItem.tripId));
                           triggerToast('Deleted saved trip');

@@ -116,7 +116,7 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch((import.meta.env.VITE_API_URL || '') + '/api/auth/logout', { method: 'POST' });
     } catch (err) {
       console.error('Logout failed:', err);
     } finally {
@@ -147,7 +147,7 @@ export function AuthProvider({ children }) {
       throw new Error('Please log in to save items to your wishlist.');
     }
     try {
-      const res = await fetch('/api/auth/wishlist', {
+      const res = await fetch((import.meta.env.VITE_API_URL || '') + '/api/auth/wishlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, country, notes, category }),
@@ -167,7 +167,7 @@ export function AuthProvider({ children }) {
   const removeFromWishlist = async (idOrName) => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/auth/wishlist/${encodeURIComponent(idOrName)}`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/auth/wishlist/${encodeURIComponent(idOrName)}`, {
         method: 'DELETE',
       });
       const data = await res.json();

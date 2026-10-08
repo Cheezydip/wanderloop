@@ -90,7 +90,7 @@ export default function ChatPanel() {
 
     while (!success && attempt < 5) {
       try {
-        const response = await fetch('/api/chat', {
+        const response = await fetch((import.meta.env.VITE_API_URL || '') + '/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'

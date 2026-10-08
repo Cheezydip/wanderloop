@@ -473,7 +473,7 @@ export default function MapPanel() {
     try {
       const allStops = state.trip?.days?.flatMap(d => d.stops || []) || [];
       const allStopsParam = allStops.map(s => `${s.lat},${s.lng}`).join('|');
-      const response = await fetch(`/api/poi?lat=${stop.lat}&lng=${stop.lng}&radius=500&allStops=${encodeURIComponent(allStopsParam)}`);
+      const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/poi?lat=${stop.lat}&lng=${stop.lng}&radius=500&allStops=${encodeURIComponent(allStopsParam)}`);
       if (response.ok) {
         const pois = await response.json();
         

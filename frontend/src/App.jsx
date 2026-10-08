@@ -47,7 +47,7 @@ export default function App() {
           const avgLng = dayLng / day.stops.length;
 
           // Fetch lodgings in a 5000m radius for this day (wide enough for rural/mountain regions)
-          const response = await fetch(`/api/lodgings?lat=${avgLat}&lng=${avgLng}&radius=5000`);
+          const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/lodgings?lat=${avgLat}&lng=${avgLng}&radius=5000`);
           if (response.ok) {
             const data = await response.json();
             return data.map(item => ({ ...item, dayId: day.id }));

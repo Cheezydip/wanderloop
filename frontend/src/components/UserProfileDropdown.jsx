@@ -39,7 +39,7 @@ export default function UserProfileDropdown({ onOpenSavedTrips, onOpenNewTripMod
   // Fetch count of user's saved trips in MongoDB Atlas
   useEffect(() => {
     if (isOpen && user) {
-      fetch('/api/trips')
+      fetch((import.meta.env.VITE_API_URL || '') + '/api/trips')
         .then((res) => (res.ok ? res.json() : []))
         .then((data) => {
           if (Array.isArray(data)) setSavedCount(data.length);

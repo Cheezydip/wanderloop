@@ -19,7 +19,7 @@ export default function SavedTripsModal({ isOpen, onClose }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/trips', {
+      const res = await fetch((import.meta.env.VITE_API_URL || '') + '/api/trips', {
         headers: { 'Content-Type': 'application/json' },
       });
       if (!res.ok) {
@@ -129,7 +129,7 @@ export default function SavedTripsModal({ isOpen, onClose }) {
     setDeletingId(tripIdToDelete);
     setConfirmDeleteId(null);
     try {
-      const res = await fetch(`/api/trips/${tripIdToDelete}`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/trips/${tripIdToDelete}`, {
         method: 'DELETE',
       });
       if (!res.ok) {

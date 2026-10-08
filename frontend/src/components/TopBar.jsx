@@ -68,7 +68,7 @@ export default function TopBar() {
 
     if (user && state.trip) {
       try {
-        await fetch('/api/trips', {
+        await fetch((import.meta.env.VITE_API_URL || '') + '/api/trips', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
