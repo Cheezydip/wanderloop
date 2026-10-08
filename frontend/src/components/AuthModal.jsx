@@ -38,8 +38,8 @@ export default function AuthModal() {
 
   const onGoogleButtonClick = () => {
     setLocalError(null);
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    if (!clientId || clientId === 'placeholder_google_client_id') {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '1010952639411-0kchcl41besnve08cblu08abta9upne7.apps.googleusercontent.com';
+    if (!clientId) {
       setLocalError(
         'Google Client ID is not configured yet. Please add VITE_GOOGLE_CLIENT_ID to your .env file to enable Google Auth.'
       );

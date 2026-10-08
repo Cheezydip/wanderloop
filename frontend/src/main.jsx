@@ -7,7 +7,7 @@ import { TripProvider } from './context/TripContext.jsx';
 import { ThemeProvider } from './context/ThemeContext.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 
-const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || 'placeholder_google_client_id';
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '1010952639411-0kchcl41besnve08cblu08abta9upne7.apps.googleusercontent.com';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
