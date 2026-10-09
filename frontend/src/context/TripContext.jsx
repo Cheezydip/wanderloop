@@ -93,12 +93,23 @@ function loadInitialState(defaultState) {
     const saved = localStorage.getItem(TRIP_STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed && parsed.hasTrip && parsed.trip) {
+      // Permanently purge any legacy mock Tokyo trip from storage
+      if (parsed?.trip?.id === 'tokyo-exploration-3d' || parsed?.trip?.title === 'Tokyo Exploration') {
+        localStorage.removeItem(TRIP_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_ACTIVE_KEY);
+        return defaultState;
+      }
+
+      if (parsed && parsed.trip) {
         const sanitizedTrip = sanitizeTripStopsDistance(parsed.trip);
         return {
           ...defaultState,
           ...parsed,
           trip: sanitizedTrip,
+          // Visiting the site always lands on the main landing page
+          hasTrip: false,
+          showQuestionnaire: false,
+          isInterviewMode: false,
           isGenerating: false,
           loadingPOIs: false,
           hoveredHomestayId: null,
@@ -634,44 +645,27 @@ function tripReducer(state, action) {
       };
     }
 
-    case 'ACTIVATE_SESSION': {
+    case 'ACTIVATE_SESSION':
+    case 'NAVIGATE_TO_MAIN_PAGE': {
       try {
         sessionStorage.setItem(SESSION_ACTIVE_KEY, 'true');
       } catch (err) {}
 
-      let currentTrip = state.trip;
-      let selectedHomestaysByDay = state.selectedHomestaysByDay;
-      let selectedHomestayId = state.selectedHomestayId;
-      let budgetItems = state.budgetItems;
-
-      if (!currentTrip) {
-        try {
-          const saved = localStorage.getItem(TRIP_STORAGE_KEY);
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (parsed && parsed.trip) {
-              currentTrip = sanitizeTripStopsDistance(parsed.trip);
-              selectedHomestaysByDay = parsed.selectedHomestaysByDay || {};
-              selectedHomestayId = parsed.selectedHomestayId || null;
-              budgetItems = parsed.budgetItems || syncBudgetItems(currentTrip, [], selectedHomestaysByDay, selectedHomestayId);
-            }
-          }
-        } catch (err) {}
-      }
-
-      if (!currentTrip) {
-        currentTrip = mockTrip;
-        budgetItems = syncBudgetItems(mockTrip, [], {}, null);
-      }
-
       return {
         ...state,
-        trip: sanitizeTripStopsDistance(currentTrip),
+        hasTrip: false,
+        showQuestionnaire: false,
+        isInterviewMode: false,
+      };
+    }
+
+    case 'RESUME_ACTIVE_TRIP': {
+      if (!state.trip || !state.trip.days || state.trip.days.length === 0) return state;
+      return {
+        ...state,
         hasTrip: true,
         showQuestionnaire: false,
-        selectedHomestaysByDay: selectedHomestaysByDay || {},
-        selectedHomestayId: selectedHomestayId || null,
-        budgetItems: budgetItems || [],
+        isInterviewMode: false,
       };
     }
 
@@ -830,6 +824,10 @@ export function TripProvider({ children }) {
   // Sync active trip state to localStorage and sessionStorage
   useEffect(() => {
     if (state.hasTrip && state.trip) {
+      // Guard: NEVER persist mock Tokyo trip to storage
+      if (state.trip.id === 'tokyo-exploration-3d' || state.trip.title === 'Tokyo Exploration') {
+        return;
+      }
       try {
         sessionStorage.setItem(SESSION_ACTIVE_KEY, 'true');
         const stateToPersist = {

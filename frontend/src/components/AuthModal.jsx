@@ -31,7 +31,7 @@ export default function AuthModal() {
       setLocalError(null);
       try {
         await loginWithGoogle({ accessToken: tokenResponse.access_token });
-        tripDispatch({ type: 'ACTIVATE_SESSION' });
+        tripDispatch({ type: 'NAVIGATE_TO_MAIN_PAGE' });
       } catch (err) {
         setLocalError(err.message || 'Google login failed.');
       } finally {
@@ -70,7 +70,7 @@ export default function AuthModal() {
     setSubmitting(true);
     try {
       await login(TEST_USER.email, TEST_USER.password);
-      tripDispatch({ type: 'ACTIVATE_SESSION' });
+      tripDispatch({ type: 'NAVIGATE_TO_MAIN_PAGE' });
       setName('');
       setEmail('');
       setPassword('');
@@ -112,7 +112,7 @@ export default function AuthModal() {
       } else {
         await login(email, password);
       }
-      tripDispatch({ type: 'ACTIVATE_SESSION' });
+      tripDispatch({ type: 'NAVIGATE_TO_MAIN_PAGE' });
       // Reset fields on success
       setName('');
       setEmail('');

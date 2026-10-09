@@ -5,7 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import SavedTripsModal from '../../components/SavedTripsModal';
 import UserProfileDropdown from '../../components/UserProfileDropdown';
 import ThemeSlider from '../../components/ThemeSlider';
-import { Cloud, LogIn, UserPlus } from 'lucide-react';
+import { Cloud, LogIn, UserPlus, Compass } from 'lucide-react';
 import TopographicMap from './TopographicMap';
 import FlightNetwork from './FlightNetwork';
 import IsometricGrid from './IsometricGrid';
@@ -498,7 +498,7 @@ function TiltMockup({ children }) {
    ═══════════════════════════════════════════════════ */
 export default function LandingPage() {
   const { theme } = useTheme();
-  const { dispatch } = useTrip();
+  const { state, dispatch } = useTrip();
   const { user, logout, openAuthModal } = useAuth();
   const [placeValue, setPlaceValue] = useState('');
   const [datesValue, setDatesValue] = useState('');
@@ -804,6 +804,18 @@ export default function LandingPage() {
 
         <div className="landing-nav-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <ThemeSlider />
+
+          {/* If there is an active non-mock trip in progress, allow quick resumption */}
+          {state?.trip && !state.hasTrip && state.trip.days?.length > 0 && state.trip.id !== 'tokyo-exploration-3d' && state.trip.title !== 'Tokyo Exploration' && (
+            <button
+              onClick={() => dispatch({ type: 'RESUME_ACTIVE_TRIP' })}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20"
+              title={`Resume ${state.trip.title || 'Current Trip'}`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Resume Trip</span>
+            </button>
+          )}
 
           {user ? (
             <div className="flex items-center gap-2">
