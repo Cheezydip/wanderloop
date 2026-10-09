@@ -3,7 +3,13 @@ import { createPortal } from 'react-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../context/AuthContext';
 import { useTrip } from '../context/TripContext';
-import { User, Mail, Lock, X, ArrowRight, Loader2 } from 'lucide-react';
+import { User, Mail, Lock, X, ArrowRight, Loader2, Sparkles, KeyRound, Copy, Check, Zap } from 'lucide-react';
+
+const TEST_USER = {
+  name: 'tester',
+  email: 'tester@gmail.com',
+  password: 'tester123',
+};
 
 export default function AuthModal() {
   const { authModalOpen, closeAuthModal, login, signup, loginWithGoogle, openAuthModal, error: authError } = useAuth();
@@ -15,6 +21,7 @@ export default function AuthModal() {
   const [submitting, setSubmitting] = useState(false);
   const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [localError, setLocalError] = useState(null);
+  const [copiedField, setCopiedField] = useState(null);
 
   const isSignup = authModalOpen === 'signup';
 
@@ -49,6 +56,40 @@ export default function AuthModal() {
   };
 
   if (!authModalOpen) return null;
+
+  const handleAutoFillTestUser = () => {
+    setEmail(TEST_USER.email);
+    setPassword(TEST_USER.password);
+    setLocalError(null);
+  };
+
+  const handleInstantTestLogin = async () => {
+    setEmail(TEST_USER.email);
+    setPassword(TEST_USER.password);
+    setLocalError(null);
+    setSubmitting(true);
+    try {
+      await login(TEST_USER.email, TEST_USER.password);
+      tripDispatch({ type: 'ACTIVATE_SESSION' });
+      setName('');
+      setEmail('');
+      setPassword('');
+    } catch (err) {
+      setLocalError(err.message || 'Authentication failed with test user.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCopy = (text, fieldName) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch (e) {
+      console.warn('Clipboard write failed:', e);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -149,11 +190,109 @@ export default function AuthModal() {
         <h2 className="text-xl font-extrabold tracking-tight mb-1 text-center" style={{ color: 'var(--text)' }}>
           {isSignup ? 'Create Your Account' : 'Welcome Back to Wanderloop'}
         </h2>
-        <p className="text-xs text-center mb-5" style={{ color: 'var(--muted, #9ca3af)' }}>
+        <p className="text-xs text-center mb-4" style={{ color: 'var(--muted, #9ca3af)' }}>
           {isSignup
             ? 'Sign up to save itineraries to your cloud account and access trips anywhere.'
             : 'Log in to access your saved trips and cloud itineraries.'}
         </p>
+
+        {/* Test / Demo User Box for instant trial */}
+        {!isSignup ? (
+          <div
+            className="mb-4 p-3 rounded-xl border transition-all"
+            style={{
+              background: 'linear-gradient(135deg, rgba(45, 212, 191, 0.08) 0%, rgba(13, 148, 136, 0.03) 100%)',
+              borderColor: 'rgba(45, 212, 191, 0.25)',
+            }}
+          >
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+                <span className="text-[11px] font-bold tracking-wide uppercase text-teal-300">
+                  Test User Credentials
+                </span>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-teal-500/15 text-teal-300 border border-teal-500/20">
+                Database Ready
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs mb-2.5">
+              <div
+                onClick={() => handleCopy(TEST_USER.email, 'email')}
+                className="group p-2 rounded-lg bg-black/30 border border-white/5 cursor-pointer hover:border-teal-500/30 transition-all"
+                title="Click to copy email"
+              >
+                <div className="text-[10px] text-zinc-400 font-medium flex items-center justify-between">
+                  <span>Email</span>
+                  {copiedField === 'email' ? (
+                    <Check className="w-3 h-3 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-3 h-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  )}
+                </div>
+                <div className="font-mono text-zinc-200 text-[11px] truncate mt-0.5">
+                  {TEST_USER.email}
+                </div>
+              </div>
+
+              <div
+                onClick={() => handleCopy(TEST_USER.password, 'password')}
+                className="group p-2 rounded-lg bg-black/30 border border-white/5 cursor-pointer hover:border-teal-500/30 transition-all"
+                title="Click to copy password"
+              >
+                <div className="text-[10px] text-zinc-400 font-medium flex items-center justify-between">
+                  <span>Password</span>
+                  {copiedField === 'password' ? (
+                    <Check className="w-3 h-3 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-3 h-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  )}
+                </div>
+                <div className="font-mono text-zinc-200 text-[11px] truncate mt-0.5">
+                  {TEST_USER.password}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAutoFillTestUser}
+                className="flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10 hover:border-teal-500/30 flex items-center justify-center gap-1.5 active:scale-[0.98]"
+              >
+                <KeyRound className="w-3 h-3 text-teal-400" />
+                Auto-fill Inputs
+              </button>
+              <button
+                type="button"
+                onClick={handleInstantTestLogin}
+                disabled={submitting}
+                className="flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 hover:border-teal-500/60 flex items-center justify-center gap-1.5 active:scale-[0.98] disabled:opacity-50"
+              >
+                <Zap className="w-3 h-3 text-teal-300 fill-teal-300" />
+                1-Click Login
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mb-4 p-2.5 rounded-xl border border-teal-500/20 bg-teal-500/5 flex items-center justify-between text-xs">
+            <span className="text-zinc-400 text-[11px]">
+              Just exploring? Use the pre-created test user.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                openAuthModal('login');
+                handleAutoFillTestUser();
+              }}
+              className="text-teal-400 font-bold text-[11px] hover:underline cursor-pointer flex items-center gap-1"
+            >
+              <Zap className="w-3 h-3 fill-teal-400" />
+              Test Account
+            </button>
+          </div>
+        )}
 
         {/* Error Alert */}
         {currentError && (

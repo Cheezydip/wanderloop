@@ -13,7 +13,7 @@ const port = parseInt(process.env.PORT || '3000', 10);
 if (!fs.existsSync(path.join(distDir, 'index.html'))) {
   console.log('⚡ dist/index.html not found, executing vite build on startup...');
   try {
-    execSync('npx vite build', { stdio: 'inherit' });
+    execSync('npx vite build', { stdio: 'inherit', cwd: __dirname });
   } catch (err) {
     console.error('Startup build failed:', err.message);
   }

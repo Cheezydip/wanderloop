@@ -284,13 +284,15 @@ router.put('/auth/profile', protect, async (req, res) => {
       if (newPassword.length < 6) {
         return res.status(400).json({ error: 'New password must be at least 6 characters long' });
       }
-      if (!currentPassword) {
-        return res.status(400).json({ error: 'Current password is required to set a new password' });
-      }
+      if (user.password) {
+        if (!currentPassword) {
+          return res.status(400).json({ error: 'Current password is required to set a new password' });
+        }
 
-      const isMatch = await user.matchPassword(currentPassword);
-      if (!isMatch) {
-        return res.status(401).json({ error: 'Current password is incorrect' });
+        const isMatch = await user.matchPassword(currentPassword);
+        if (!isMatch) {
+          return res.status(401).json({ error: 'Current password is incorrect' });
+        }
       }
 
       user.password = newPassword;

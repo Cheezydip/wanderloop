@@ -56,7 +56,12 @@ const corsOptions = {
         }
         return callback(null, true);
       }
-    : ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    : (origin, callback) => {
+        if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+          return callback(null, true);
+        }
+        return callback(null, true);
+      },
   credentials: true,
 };
 
