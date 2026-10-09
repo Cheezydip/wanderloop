@@ -799,7 +799,6 @@ export default function LandingPage() {
           <li><a href="#landing-features">Features</a></li>
           <li><a href="#landing-how">How it works</a></li>
           <li><a href="#landing-showcase">Product</a></li>
-          <li><a href="#landing-testimonials">Reviews</a></li>
         </ul>
 
         <div className="landing-nav-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1135,22 +1134,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ═══ TESTIMONIALS — MASONRY GRID ═══ */}
-      <section className="landing-section" id="landing-testimonials" style={{ background: 'var(--surface)' }}>
-        <div className="landing-section-inner">
-          <div className="landing-section-header" ref={testimonialsHeaderRef}>
-            <div className="landing-section-label">✦ Reviews</div>
-            <h2 className="landing-section-title">Travelers love the plan</h2>
-            <p className="landing-section-desc">Real feedback from real travelers who planned real trips.</p>
-          </div>
-
-          <div className="landing-testimonial-masonry" ref={testimonialGridRef}>
-            {testimonials.map((t, idx) => (
-              <TestimonialCard key={idx} text={t.text} name={t.name} role={t.role} avatarClass={t.avatar} />
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* ═══ TESTIMONIALS / REVIEWS SECTION (HIDDEN) ═══ */}
 
       {/* ═══ CTA — PARTICLE CONSTELLATION ═══ */}
       <section className="landing-section landing-cta" ref={ctaRef}>

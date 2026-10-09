@@ -4,16 +4,19 @@ const ThemeContext = createContext(undefined);
 
 export function ThemeProvider({ children }) {
   const [theme, setThemeState] = useState(() => {
-    // Read from localStorage on initial load
+    // Read from localStorage on initial load, default to 'sunset' (day theme)
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('wanderloop-theme') || 'dark';
+      const stored = localStorage.getItem('wanderloop-theme-mode');
+      if (stored === 'dark' || stored === 'sunset') return stored;
+      return 'sunset';
     }
-    return 'dark';
+    return 'sunset';
   });
 
   // Apply theme to DOM and persist
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('wanderloop-theme-mode', theme);
     localStorage.setItem('wanderloop-theme', theme);
 
     // Update meta theme-color for mobile browsers

@@ -130,7 +130,7 @@ export default function AuthModal() {
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
       style={{
-        background: 'rgba(0, 0, 0, 0.7)',
+        background: 'rgba(0, 0, 0, 0.65)',
         backdropFilter: 'blur(8px)',
         animation: 'fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
       }}
@@ -141,9 +141,9 @@ export default function AuthModal() {
       <div
         className="w-full max-w-md rounded-2xl p-6 shadow-2xl relative overflow-hidden"
         style={{
-          background: 'var(--surface, #14171d)',
-          border: '1px solid var(--border, rgba(255,255,255,0.08))',
-          color: 'var(--text, #f3f4f6)',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          color: 'var(--text)',
         }}
       >
         {/* Close Button */}
@@ -151,9 +151,9 @@ export default function AuthModal() {
           onClick={closeAuthModal}
           className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-colors"
           style={{
-            background: 'var(--surface-2, rgba(255,255,255,0.05))',
-            color: 'var(--muted, #9ca3af)',
-            border: 'none',
+            background: 'var(--surface-2)',
+            color: 'var(--muted)',
+            border: '1px solid var(--border)',
           }}
           aria-label="Close authentication modal"
         >
@@ -161,14 +161,17 @@ export default function AuthModal() {
         </button>
 
         {/* Header Tabs */}
-        <div className="flex items-center justify-center gap-2 mb-6 p-1 rounded-xl" style={{ background: 'var(--surface-2, rgba(255,255,255,0.03))', border: '1px solid var(--border, rgba(255,255,255,0.06))' }}>
+        <div
+          className="flex items-center justify-center gap-2 mb-6 p-1 rounded-xl"
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}
+        >
           <button
             type="button"
             onClick={() => openAuthModal('login')}
             className="flex-1 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer text-center"
             style={{
-              background: !isSignup ? 'var(--accent, #2dd4bf)' : 'transparent',
-              color: !isSignup ? 'var(--bg, #090a0f)' : 'var(--muted, #9ca3af)',
+              background: !isSignup ? 'var(--accent)' : 'transparent',
+              color: !isSignup ? '#ffffff' : 'var(--muted)',
             }}
           >
             Log In
@@ -178,8 +181,8 @@ export default function AuthModal() {
             onClick={() => openAuthModal('signup')}
             className="flex-1 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer text-center"
             style={{
-              background: isSignup ? 'var(--accent, #2dd4bf)' : 'transparent',
-              color: isSignup ? 'var(--bg, #090a0f)' : 'var(--muted, #9ca3af)',
+              background: isSignup ? 'var(--accent)' : 'transparent',
+              color: isSignup ? '#ffffff' : 'var(--muted)',
             }}
           >
             Sign Up
@@ -190,7 +193,7 @@ export default function AuthModal() {
         <h2 className="text-xl font-extrabold tracking-tight mb-1 text-center" style={{ color: 'var(--text)' }}>
           {isSignup ? 'Create Your Account' : 'Welcome Back to Wanderloop'}
         </h2>
-        <p className="text-xs text-center mb-4" style={{ color: 'var(--muted, #9ca3af)' }}>
+        <p className="text-xs text-center mb-4" style={{ color: 'var(--muted)' }}>
           {isSignup
             ? 'Sign up to save itineraries to your cloud account and access trips anywhere.'
             : 'Log in to access your saved trips and cloud itineraries.'}
@@ -201,18 +204,25 @@ export default function AuthModal() {
           <div
             className="mb-4 p-3 rounded-xl border transition-all"
             style={{
-              background: 'linear-gradient(135deg, rgba(45, 212, 191, 0.08) 0%, rgba(13, 148, 136, 0.03) 100%)',
-              borderColor: 'rgba(45, 212, 191, 0.25)',
+              background: 'var(--accent-dim)',
+              borderColor: 'var(--accent-border)',
             }}
           >
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-teal-400" />
-                <span className="text-[11px] font-bold tracking-wide uppercase text-teal-300">
+                <Sparkles className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                <span className="text-[11px] font-bold tracking-wide uppercase" style={{ color: 'var(--accent)' }}>
                   Test User Credentials
                 </span>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-teal-500/15 text-teal-300 border border-teal-500/20">
+              <span
+                className="text-[10px] px-2 py-0.5 rounded-full font-medium border"
+                style={{
+                  background: 'var(--surface)',
+                  color: 'var(--accent)',
+                  borderColor: 'var(--accent-border)',
+                }}
+              >
                 Database Ready
               </span>
             </div>
@@ -220,36 +230,44 @@ export default function AuthModal() {
             <div className="grid grid-cols-2 gap-2 text-xs mb-2.5">
               <div
                 onClick={() => handleCopy(TEST_USER.email, 'email')}
-                className="group p-2 rounded-lg bg-black/30 border border-white/5 cursor-pointer hover:border-teal-500/30 transition-all"
+                className="group p-2 rounded-lg border cursor-pointer transition-all"
+                style={{
+                  background: 'var(--surface)',
+                  borderColor: 'var(--border)',
+                }}
                 title="Click to copy email"
               >
-                <div className="text-[10px] text-zinc-400 font-medium flex items-center justify-between">
+                <div className="text-[10px] font-medium flex items-center justify-between" style={{ color: 'var(--muted)' }}>
                   <span>Email</span>
                   {copiedField === 'email' ? (
-                    <Check className="w-3 h-3 text-emerald-400" />
+                    <Check className="w-3 h-3 text-emerald-500" />
                   ) : (
-                    <Copy className="w-3 h-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <Copy className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--muted)' }} />
                   )}
                 </div>
-                <div className="font-mono text-zinc-200 text-[11px] truncate mt-0.5">
+                <div className="font-mono text-[11px] font-semibold truncate mt-0.5" style={{ color: 'var(--text)' }}>
                   {TEST_USER.email}
                 </div>
               </div>
 
               <div
                 onClick={() => handleCopy(TEST_USER.password, 'password')}
-                className="group p-2 rounded-lg bg-black/30 border border-white/5 cursor-pointer hover:border-teal-500/30 transition-all"
+                className="group p-2 rounded-lg border cursor-pointer transition-all"
+                style={{
+                  background: 'var(--surface)',
+                  borderColor: 'var(--border)',
+                }}
                 title="Click to copy password"
               >
-                <div className="text-[10px] text-zinc-400 font-medium flex items-center justify-between">
+                <div className="text-[10px] font-medium flex items-center justify-between" style={{ color: 'var(--muted)' }}>
                   <span>Password</span>
                   {copiedField === 'password' ? (
-                    <Check className="w-3 h-3 text-emerald-400" />
+                    <Check className="w-3 h-3 text-emerald-500" />
                   ) : (
-                    <Copy className="w-3 h-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <Copy className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--muted)' }} />
                   )}
                 </div>
-                <div className="font-mono text-zinc-200 text-[11px] truncate mt-0.5">
+                <div className="font-mono text-[11px] font-semibold truncate mt-0.5" style={{ color: 'var(--text)' }}>
                   {TEST_USER.password}
                 </div>
               </div>
@@ -259,25 +277,41 @@ export default function AuthModal() {
               <button
                 type="button"
                 onClick={handleAutoFillTestUser}
-                className="flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10 hover:border-teal-500/30 flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                className="flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer border flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                style={{
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  borderColor: 'var(--border)',
+                }}
               >
-                <KeyRound className="w-3 h-3 text-teal-400" />
+                <KeyRound className="w-3 h-3" style={{ color: 'var(--accent)' }} />
                 Auto-fill Inputs
               </button>
               <button
                 type="button"
                 onClick={handleInstantTestLogin}
                 disabled={submitting}
-                className="flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 hover:border-teal-500/60 flex items-center justify-center gap-1.5 active:scale-[0.98] disabled:opacity-50"
+                className="flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer border flex items-center justify-center gap-1.5 active:scale-[0.98] disabled:opacity-50"
+                style={{
+                  background: 'var(--accent)',
+                  color: '#ffffff',
+                  borderColor: 'var(--accent)',
+                }}
               >
-                <Zap className="w-3 h-3 text-teal-300 fill-teal-300" />
+                <Zap className="w-3 h-3 fill-white text-white" />
                 1-Click Login
               </button>
             </div>
           </div>
         ) : (
-          <div className="mb-4 p-2.5 rounded-xl border border-teal-500/20 bg-teal-500/5 flex items-center justify-between text-xs">
-            <span className="text-zinc-400 text-[11px]">
+          <div
+            className="mb-4 p-2.5 rounded-xl border flex items-center justify-between text-xs"
+            style={{
+              background: 'var(--accent-dim)',
+              borderColor: 'var(--accent-border)',
+            }}
+          >
+            <span className="text-[11px]" style={{ color: 'var(--muted)' }}>
               Just exploring? Use the pre-created test user.
             </span>
             <button
@@ -286,9 +320,10 @@ export default function AuthModal() {
                 openAuthModal('login');
                 handleAutoFillTestUser();
               }}
-              className="text-teal-400 font-bold text-[11px] hover:underline cursor-pointer flex items-center gap-1"
+              className="font-bold text-[11px] hover:underline cursor-pointer flex items-center gap-1"
+              style={{ color: 'var(--accent)' }}
             >
-              <Zap className="w-3 h-3 fill-teal-400" />
+              <Zap className="w-3 h-3" style={{ fill: 'var(--accent)', color: 'var(--accent)' }} />
               Test Account
             </button>
           </div>
@@ -296,7 +331,7 @@ export default function AuthModal() {
 
         {/* Error Alert */}
         {currentError && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-semibold">
+          <div className="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-500 text-xs font-semibold">
             {currentError}
           </div>
         )}
@@ -307,15 +342,15 @@ export default function AuthModal() {
             type="button"
             onClick={onGoogleButtonClick}
             disabled={googleSubmitting || submitting}
-            className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer hover:bg-white/10 active:scale-[0.99] disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50 hover:opacity-90"
             style={{
-              background: 'var(--surface-2, rgba(255,255,255,0.04))',
-              border: '1px solid var(--border, rgba(255,255,255,0.1))',
-              color: 'var(--text, #f3f4f6)',
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              color: 'var(--text)',
             }}
           >
             {googleSubmitting ? (
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
             ) : (
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path
@@ -342,8 +377,11 @@ export default function AuthModal() {
 
         {/* Divider */}
         <div className="relative my-4 flex items-center justify-center">
-          <div className="w-full border-t" style={{ borderColor: 'var(--border, rgba(255,255,255,0.08))' }} />
-          <span className="absolute px-3 text-[10px] font-semibold uppercase tracking-wider" style={{ background: 'var(--surface, #14171d)', color: 'var(--muted, #9ca3af)' }}>
+          <div className="w-full border-t" style={{ borderColor: 'var(--border)' }} />
+          <span
+            className="absolute px-3 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ background: 'var(--surface)', color: 'var(--muted)' }}
+          >
             or continue with email
           </span>
         </div>
@@ -364,8 +402,8 @@ export default function AuthModal() {
                   onChange={(e) => setName(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl border text-xs outline-none transition-colors"
                   style={{
-                    background: 'var(--surface-2, rgba(255,255,255,0.03))',
-                    borderColor: 'var(--border, rgba(255,255,255,0.08))',
+                    background: 'var(--surface-2)',
+                    borderColor: 'var(--border)',
                     color: 'var(--text)',
                   }}
                   required={isSignup}
@@ -387,8 +425,8 @@ export default function AuthModal() {
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl border text-xs outline-none transition-colors"
                 style={{
-                  background: 'var(--surface-2, rgba(255,255,255,0.03))',
-                  borderColor: 'var(--border, rgba(255,255,255,0.08))',
+                  background: 'var(--surface-2)',
+                  borderColor: 'var(--border)',
                   color: 'var(--text)',
                 }}
                 required
@@ -409,8 +447,8 @@ export default function AuthModal() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl border text-xs outline-none transition-colors"
                 style={{
-                  background: 'var(--surface-2, rgba(255,255,255,0.03))',
-                  borderColor: 'var(--border, rgba(255,255,255,0.08))',
+                  background: 'var(--surface-2)',
+                  borderColor: 'var(--border)',
                   color: 'var(--text)',
                 }}
                 required
@@ -422,17 +460,17 @@ export default function AuthModal() {
           <button
             type="submit"
             disabled={submitting}
-            className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl font-bold text-xs cursor-pointer transition-all active:scale-[0.99] disabled:opacity-50"
+            className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl font-bold text-xs cursor-pointer transition-all active:scale-[0.99] disabled:opacity-50 hover:opacity-95"
             style={{
-              background: 'var(--accent, #2dd4bf)',
-              color: 'var(--bg, #090a0f)',
+              background: 'var(--accent)',
+              color: '#ffffff',
               border: 'none',
-              boxShadow: '0 4px 14px rgba(45, 212, 191, 0.25)',
+              boxShadow: 'var(--accent-glow, 0 4px 14px rgba(0,0,0,0.15))',
             }}
           >
             {submitting ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
                 <span>{isSignup ? 'Creating Account...' : 'Logging in...'}</span>
               </>
             ) : (
@@ -445,7 +483,10 @@ export default function AuthModal() {
         </form>
 
         {/* Footer switch prompt */}
-        <div className="mt-5 pt-4 border-t text-center text-xs" style={{ borderColor: 'var(--border, rgba(255,255,255,0.06))', color: 'var(--muted)' }}>
+        <div
+          className="mt-5 pt-4 border-t text-center text-xs"
+          style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}
+        >
           {isSignup ? (
             <span>
               Already have an account?{' '}
