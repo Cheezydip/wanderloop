@@ -480,7 +480,7 @@ router.post('/chat', async (req, res) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, currentTrip }),
-        signal: AbortSignal.timeout(35000)
+        signal: AbortSignal.timeout(90000)
       });
 
       if (aiRes.ok) {
