@@ -93,6 +93,13 @@ export function lookupKnownLandmark(queryStr, centerLat = null, centerLng = null
   else if (q.includes('louvre') || q.includes('musee du louvre')) match = { lat: 48.8606, lng: 2.3376 };
   else if (q.includes('big ben') || q.includes('palace of westminster')) match = { lat: 51.5007, lng: -0.1246 };
   else if (q.includes('london eye')) match = { lat: 51.5033, lng: -0.1195 };
+  else if (q.includes('broadway theater') || q.includes('broadway theatre') || q.includes('broadway')) match = { lat: 40.7590, lng: -73.9845 };
+  else if (q.includes('empire state building')) match = { lat: 40.7484, lng: -73.9857 };
+  else if (q.includes('metropolitan museum') || q.includes('the met')) match = { lat: 40.7794, lng: -73.9632 };
+  else if (q.includes('rockefeller center') || q.includes('top of the rock')) match = { lat: 40.7587, lng: -73.9787 };
+  else if (q.includes('high line')) match = { lat: 40.7480, lng: -74.0048 };
+  else if (q.includes('grand central')) match = { lat: 40.7527, lng: -73.9772 };
+  else if (q.includes('one world observatory')) match = { lat: 40.7130, lng: -74.0132 };
   else if (q.includes('statue of liberty')) match = { lat: 40.6892, lng: -74.0445 };
   else if (q.includes('times square')) match = { lat: 40.7580, lng: -73.9855 };
   else if (q.includes('central park')) match = { lat: 40.7829, lng: -73.9654 };
@@ -138,7 +145,7 @@ export async function geocodeLocation(query, destination = null, centerLat = nul
     return result;
   }
 
-  const PREFERRED_MAX_DIST_KM = 350; // Preferred radius for local city matches
+  const PREFERRED_MAX_DIST_KM = 60; // Preferred radius for local city matches
 
   // Step 2: OpenStreetMap Nominatim with destination context
   let queriesToTry = [];
@@ -151,8 +158,8 @@ export async function geocodeLocation(query, destination = null, centerLat = nul
     try {
       let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(qStr)}&format=geojson&limit=5`;
       if (typeof centerLat === 'number' && typeof centerLng === 'number' && !isNaN(centerLat) && !isNaN(centerLng)) {
-        const viewbox = `${centerLng - 0.5},${centerLat + 0.5},${centerLng + 0.5},${centerLat - 0.5}`;
-        url += `&viewbox=${viewbox}`;
+        const viewbox = `${centerLng - 0.45},${centerLat + 0.45},${centerLng + 0.45},${centerLat - 0.45}`;
+        url += `&viewbox=${viewbox}&bounded=1`;
       }
 
       const controller = new AbortController();
@@ -179,8 +186,6 @@ export async function geocodeLocation(query, destination = null, centerLat = nul
             // Require text relevance to prevent arbitrary nearby venue substitutions
             if (!isTextMatchRelevant(cleanQuery, featLabel)) continue;
 
-            if (!firstRelevantFeature) firstRelevantFeature = feat;
-
             if (typeof centerLat === 'number' && typeof centerLng === 'number') {
               const dist = haversineKm(centerLat, centerLng, fLat, fLng);
               if (dist <= PREFERRED_MAX_DIST_KM && dist < minDist) {
@@ -191,11 +196,6 @@ export async function geocodeLocation(query, destination = null, centerLat = nul
               bestFeature = feat;
               break;
             }
-          }
-
-          // Fallback to first relevant feature if none within preferred local distance (e.g. multi-city stop additions)
-          if (!bestFeature && firstRelevantFeature) {
-            bestFeature = firstRelevantFeature;
           }
 
           if (bestFeature) {
@@ -230,7 +230,6 @@ export async function geocodeLocation(query, destination = null, centerLat = nul
         if (pData.features && pData.features.length > 0) {
           let bestFeature = null;
           let minDist = Infinity;
-          let firstRelevantFeature = null;
 
           for (const feat of pData.features) {
             const [fLng, fLat] = feat.geometry.coordinates;
@@ -238,8 +237,6 @@ export async function geocodeLocation(query, destination = null, centerLat = nul
 
             // Require text relevance to prevent arbitrary nearby venue substitutions
             if (!isTextMatchRelevant(cleanQuery, featLabel)) continue;
-
-            if (!firstRelevantFeature) firstRelevantFeature = feat;
 
             if (typeof centerLat === 'number' && typeof centerLng === 'number') {
               const dist = haversineKm(centerLat, centerLng, fLat, fLng);
@@ -251,10 +248,6 @@ export async function geocodeLocation(query, destination = null, centerLat = nul
               bestFeature = feat;
               break;
             }
-          }
-
-          if (!bestFeature && firstRelevantFeature) {
-            bestFeature = firstRelevantFeature;
           }
 
           if (bestFeature) {

@@ -423,7 +423,8 @@ function parseTripModificationIntent(userPrompt) {
   const addStopMatch = p.match(/(?:add|include|put|insert)\s+(?:a\s+)?(.+?)(?:\s+(?:to|on|in)\s+day\s*(\d+))?$/i)
     || p.match(/(?:add|include|put|insert)\s+(?:a\s+)?(.+?)(?:\s+(?:to|on|in)\s+day\s*(\d+))/i);
   if (addStopMatch) {
-    const placeName = addStopMatch[1].replace(/\s+(?:to|on|in)\s+day\s*\d+$/i, '').trim();
+    let placeName = addStopMatch[1].replace(/\s+(?:to|on|in)\s+day\s*\d+$/i, '').trim();
+    placeName = placeName.replace(/^(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:stop|place|attraction|activity|landmark|site)?\s*(?:called|named|like|such as|at|for|titled|known as|to be)?\s*[:\-]?\s*/i, '').trim();
     const dayNum = addStopMatch[2] ? parseInt(addStopMatch[2]) : null;
     if (!/^\d+\s+(?:more\s+)?days?(?:\s+.*)?$/i.test(placeName) && !/^(a|another|one)\s+day$/i.test(placeName) && placeName.length > 1 && placeName.length < 120) {
       return { intent: 'ADD_STOP', placeName, targetDay: dayNum };
